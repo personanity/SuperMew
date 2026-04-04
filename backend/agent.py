@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 import os
 import json
 import asyncio
+from pydantic import BaseModel, Field
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
@@ -159,6 +160,49 @@ def summarize_old_messages(model, messages: list) -> str:
     return summary
 
 
+class FollowUpQuestions(BaseModel):
+    questions: list[str] = Field(description="3个最相关、最可能的追问问题")
+
+async def _generate_follow_ups(user_text: str, prev_messages: list, llm_model) -> list[str]:
+    """后台异步生成追问问题，不阻塞主流式输出"""
+    try:
+        history_lines = []
+        for msg in prev_messages[-4:]:
+            role = "用户" if msg.type == "human" else "AI"
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            history_lines.append(f"{role}: {content}")
+        history = "\n".join(history_lines)
+        
+        prompt = (
+            "你是一个鼻咽癌智能问答助手的意图预测模块。请根据对话上下文和用户的最新提问，"
+            "预测用户在得到专业回答后，接下来最关心、最可能追问的 3 个简短问题（控制在20字以内）。\n"
+            "⚠️重要限制：\n"
+            "1. 追问必须是**具体的医学、治疗方案、副作用机制或病理原理**（例如：“早反应A/B型鼻咽癌患者缩短诱导化疗周期具体是缩短到几程？”、“化疗引起的骨髓抑制如何缓解？”）。\n"
+            "2. **严禁**生成关于“检查费用”、“医保报销”、“几天出结果”、“在哪家医院挂号”等与具体本地政策和后勤相关的问题。\n"
+            "3. 追问必须与用户的提问意图具有高度逻辑延续性。\n\n"
+            "你必须且只能返回一个合法的 JSON 字符串数组，不要包含任何 markdown 标记（如 ```json）、反引号或其他解释性文本。\n"
+            '格式必须绝对形如：["问题1", "问题2", "问题3"]\n\n'
+            f"历史上下文：\n{history}\n\n"
+            f"用户最新提问：{user_text}\n"
+        )
+        
+        # 使用线程池调用同步 invoke，防止某些模型不支持 ainvoke 导致静默失败
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, lambda: llm_model.invoke([SystemMessage(content=prompt)]))
+        
+        content = res.content.strip()
+        if content.startswith("```"):
+            content = content.strip("`").replace("json", "", 1).strip()
+            
+        questions = json.loads(content)
+        if isinstance(questions, list):
+            return questions[:3]
+        return []
+    except Exception as e:
+        print(f"Follow-up generation error: {e}")
+        return []
+
+
 def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: str = "default_session"):
     """使用 Agent 处理用户消息并返回响应"""
     messages = storage.load(user_id, session_id)
@@ -238,6 +282,9 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
 
     messages.append(HumanMessage(content=user_text))
 
+    # 启动后台意图识别任务（并发执行，彻底隐藏延迟）
+    follow_up_task = asyncio.create_task(_generate_follow_ups(user_text, messages[:-1], model))
+
     full_response = ""
 
     async def _agent_worker():
@@ -306,6 +353,14 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
     # 发送 trace 信息
     if rag_trace:
         yield f"data: {json.dumps({'type': 'trace', 'rag_trace': rag_trace})}\n\n"
+
+    # 获取并发送追问（等待最多 3 秒，如果不返回则放弃，保证不阻塞）
+    try:
+        follow_ups = await asyncio.wait_for(follow_up_task, timeout=3.0)
+        if follow_ups:
+            yield f"data: {json.dumps({'type': 'follow_ups', 'questions': follow_ups}, ensure_ascii=False)}\n\n"
+    except Exception as e:
+        print(f"Wait for follow_ups timeout/error: {e}")
 
     # 发送结束信号
     yield "data: [DONE]\n\n"

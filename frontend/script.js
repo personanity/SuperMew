@@ -130,6 +130,61 @@ createApp({
             }
         },
 
+        async copyText(text, event) {
+            const icon = event.currentTarget.querySelector('i');
+            const oldClass = icon.className;
+            
+            const successCallback = () => {
+                icon.className = 'fas fa-check';
+                setTimeout(() => {
+                    icon.className = oldClass;
+                }, 2000);
+            };
+
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                    successCallback();
+                } else {
+                    // Fallback for non-secure contexts (HTTP over network)
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    textArea.style.position = "fixed";
+                    textArea.style.left = "-999999px";
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    document.execCommand('copy');
+                    textArea.remove();
+                    successCallback();
+                }
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                alert("复制失败，您的浏览器不支持该功能。");
+            }
+        },
+
+        toggleAction(event, type) {
+            const icon = event.currentTarget.querySelector('i');
+            if (type === 'up') {
+                icon.className = icon.className.includes('fas') ? 'far fa-thumbs-up' : 'fas fa-thumbs-up';
+            } else if (type === 'down') {
+                icon.className = icon.className.includes('fas') ? 'far fa-thumbs-down' : 'fas fa-thumbs-down';
+            } else if (type === 'share') {
+                const oldClass = icon.className;
+                icon.className = 'fas fa-check';
+                setTimeout(() => { icon.className = oldClass; }, 1000);
+            } else {
+                // Default for star
+                icon.className = icon.className.includes('fas') ? 'far fa-star' : 'fas fa-star';
+            }
+        },
+
+        sendFollowUp(question) {
+            this.userInput = question;
+            this.handleSend();
+        },
+
         escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -165,7 +220,8 @@ createApp({
             // Add user message
             this.messages.push({
                 text: text,
-                isUser: true
+                isUser: true,
+                isComplete: true
             });
             
             this.userInput = '';
@@ -181,9 +237,11 @@ createApp({
             this.messages.push({ 
                 text: '', 
                 isUser: false, 
-                isThinking: true, 
+                isThinking: true,
+                isComplete: false,
                 ragTrace: null,
-                ragSteps: [] 
+                ragSteps: [],
+                followUps: []
             });
             const botMsgIdx = this.messages.length - 1;
 
@@ -238,6 +296,8 @@ createApp({
                                         this.messages[botMsgIdx].ragSteps = [];
                                     }
                                     this.messages[botMsgIdx].ragSteps.push(data.step);
+                                } else if (data.type === 'follow_ups') {
+                                    this.messages[botMsgIdx].followUps = data.questions;
                                 } else if (data.type === 'error') {
                                     this.messages[botMsgIdx].isThinking = false;
                                     this.messages[botMsgIdx].text += `\n[Error: ${data.content}]`;
@@ -267,6 +327,9 @@ createApp({
             } finally {
                 this.isLoading = false;
                 this.abortController = null;
+                if (this.messages[botMsgIdx]) {
+                    this.messages[botMsgIdx].isComplete = true;
+                }
                 this.$nextTick(() => this.scrollToBottom());
             }
         },
@@ -335,7 +398,8 @@ createApp({
                 this.messages = data.messages.map(msg => ({
                     text: msg.content,
                     isUser: msg.type === 'human',
-                    ragTrace: msg.rag_trace || null
+                    ragTrace: msg.rag_trace || null,
+                    isComplete: true
                 }));
                 
                 this.$nextTick(() => {

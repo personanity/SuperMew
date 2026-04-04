@@ -103,7 +103,7 @@ def _format_docs(docs: List[dict]) -> str:
 def retrieve_initial(state: RAGState) -> RAGState:
     query = state["question"]
     emit_rag_step("🔍", "正在检索知识库...", f"查询: {query[:50]}")
-    retrieved = retrieve_documents(query, top_k=5)
+    retrieved = retrieve_documents(query, top_k=15)
     results = retrieved.get("docs", [])
     retrieve_meta = retrieved.get("meta", {})
     context = _format_docs(results)
@@ -180,6 +180,7 @@ def grade_documents_node(state: RAGState) -> RAGState:
     route = "generate_answer" if score == "yes" else "rewrite_question"
     if route == "generate_answer":
         emit_rag_step("✅", "文档相关性评估通过", f"评分: {score}")
+        emit_rag_step("🧠", "开始整理知识，准备生成回答...")
     else:
         emit_rag_step("⚠️", "文档相关性不足，将重写查询", f"评分: {score}")
     grade_update = {
@@ -268,7 +269,7 @@ def retrieve_expanded(state: RAGState) -> RAGState:
 
     if strategy in ("hyde", "complex"):
         hypothetical_doc = state.get("hypothetical_doc") or generate_hypothetical_document(state["question"])
-        retrieved_hyde = retrieve_documents(hypothetical_doc, top_k=5)
+        retrieved_hyde = retrieve_documents(hypothetical_doc, top_k=15)
         results.extend(retrieved_hyde.get("docs", []))
         hyde_meta = retrieved_hyde.get("meta", {})
         emit_rag_step(
@@ -300,7 +301,7 @@ def retrieve_expanded(state: RAGState) -> RAGState:
 
     if strategy in ("step_back", "complex"):
         expanded_query = state.get("expanded_query") or state["question"]
-        retrieved_stepback = retrieve_documents(expanded_query, top_k=5)
+        retrieved_stepback = retrieve_documents(expanded_query, top_k=15)
         results.extend(retrieved_stepback.get("docs", []))
         step_meta = retrieved_stepback.get("meta", {})
         emit_rag_step(
@@ -346,6 +347,7 @@ def retrieve_expanded(state: RAGState) -> RAGState:
 
     context = _format_docs(deduped)
     emit_rag_step("✅", f"扩展检索完成，共 {len(deduped)} 个片段")
+    emit_rag_step("🧠", "开始汇总扩充知识，准备生成回答...")
     rag_trace = state.get("rag_trace", {}) or {}
     rag_trace.update({
         "expanded_query": state.get("expanded_query") or state["question"],

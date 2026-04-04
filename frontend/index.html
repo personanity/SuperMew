@@ -311,6 +311,30 @@
                             </div>
                         </details>
                     </div>
+
+                    <!-- 猜你想问（追问区） -->
+                    <div v-if="!msg.isUser && msg.followUps && msg.followUps.length > 0" class="follow-ups-wrapper">
+                        <div class="follow-ups-title">● 猜你想问：</div>
+                        <div class="follow-ups-list">
+                            <button v-for="(q, qIdx) in msg.followUps" :key="qIdx" class="follow-up-btn" @click="sendFollowUp(q)">
+                                {{ q }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 操作按钮与免责申明 -->
+                    <div v-if="!msg.isUser && msg.isComplete && msg.text" class="message-actions-wrapper">
+                        <div class="message-actions">
+                            <button class="action-btn" title="复制" @click="copyText(msg.text, $event)"><i class="far fa-copy"></i></button>
+                            <button class="action-btn" title="收藏" @click="toggleAction($event)"><i class="far fa-star"></i></button>
+                            <button class="action-btn" title="分享" @click="toggleAction($event, 'share')"><i class="fas fa-share-alt"></i></button>
+                            <button class="action-btn" title="赞" @click="toggleAction($event, 'up')"><i class="far fa-thumbs-up"></i></button>
+                            <button class="action-btn" title="踩" @click="toggleAction($event, 'down')"><i class="far fa-thumbs-down"></i></button>
+                        </div>
+                        <div class="message-disclaimer">
+                            ● 免责申明：AI可能会出错，仅供参考，具体以医生诊断为主。
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Loading Indicator -->
