@@ -7,12 +7,14 @@ from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
 from tools import search_knowledge_base, get_last_rag_context, reset_tool_call_guards, set_rag_step_queue
+from profile_manager import ProfileManager
 from datetime import datetime
 
 load_dotenv()
 
 API_KEY = os.getenv("ARK_API_KEY")
 MODEL = os.getenv("MODEL")
+FAST_MODEL = os.getenv("FAST_MODEL", MODEL)
 BASE_URL = os.getenv("BASE_URL")
 
 class ConversationStorage:
@@ -109,7 +111,7 @@ class ConversationStorage:
 
 
 
-def create_agent_instance():
+def create_agent_instance(profile: dict = None):
     model = init_chat_model(
         model=MODEL,
         model_provider="openai",
@@ -118,29 +120,50 @@ def create_agent_instance():
         temperature=0.3,
         stream_usage=True,
     )
+    
+    fast_model = init_chat_model(
+        model=FAST_MODEL,
+        model_provider="openai",
+        api_key=API_KEY,
+        base_url=BASE_URL,
+        temperature=0.2,
+    )
+
+    base_system_prompt = (
+        "你是一个专门为鼻咽癌（Nasopharyngeal Carcinoma）患者及家属提供医疗咨询和心理支持的智能问答助手。你的名字叫“喵喵”，语气温暖、专业、充满同理心。\n"
+        "请严格遵守以下规则：\n"
+        "1. 只要用户询问病情、治疗、医学科普等内容，你必须使用 search_knowledge_base 工具检索专业的医疗知识库。\n"
+        "2. 每次对话最多调用一次检索工具，接收到检索结果后，必须立刻基于该结果生成 Final Answer，不可重复调用。\n"
+        "3. 如果检索到的知识库内容不足以回答问题，请诚实地说明你不知道，切勿捏造或猜测任何医疗事实。\n"
+        "4. 回答结构：在进行详细的医学解读或建议之前，**必须**先在回答的最开头提供一段简明扼要的「深度总结（核心结论）」，让患者或家属能一眼看懂核心要点，然后再分段或分点进行详细的解读。\n"
+        "5. 引用格式：当你的回答参考了检索到的文档块时，**必须**在引用的句子末尾使用 [1] 或 [2][3] 这样的内联序号标注来源。\n"
+        "6. 名词解释：当你提到重要的医学术语、治疗方案、药物或解剖学名词时，**必须**使用 HTML 标签包裹它以提供解释，格式为：<span class=\"concept-tooltip\" data-desc=\"简短的术语解释或定义\">医学名词</span>。这样用户可以在前端点击查看解释。\n"
+        "7. 如果工具返回了退步问题（Step-back）相关的解答，请结合该普遍原理来回答，但不要在最终回复中暴露思考过程（chain-of-thought）。\n"
+        "请始终用中文和用户进行自然、流畅、通俗易懂的交流。\n"
+    )
+
+    if profile and isinstance(profile, dict) and profile.get('medical_summary'):
+        # 仅使用精炼的 medical_summary 作为长效记忆，大幅降低系统复杂度
+        memory_lines = [
+            "\n【当前患者的 Long-Term Memory (长效病历记忆)】",
+            f"病历报告时间: {profile.get('record_date', '未知')}",
+            f"病情总结: {profile['medical_summary']}",
+            "请牢记以上患者背景信息，在回答时紧密结合患者的实际病情、分期或用药史，提供高度个性化且具有针对性的建议。如果问题与患者病情无关，可仅做参考。"
+        ]
+        base_system_prompt += "\n".join(memory_lines)
 
     agent = create_agent(
         model=model,
         tools=[search_knowledge_base],
-        system_prompt=(
-            "你是一个专门为鼻咽癌（Nasopharyngeal Carcinoma）患者及家属提供医疗咨询和心理支持的智能问答助手。你的名字叫“喵喵”，语气温暖、专业、充满同理心。\n"
-            "请严格遵守以下规则：\n"
-            "1. 只要用户询问病情、治疗、医学科普等内容，你必须使用 search_knowledge_base 工具检索专业的医疗知识库。\n"
-            "2. 每次对话最多调用一次检索工具，接收到检索结果后，必须立刻基于该结果生成 Final Answer，不可重复调用。\n"
-            "3. 如果检索到的知识库内容不足以回答问题，请诚实地说明你不知道，切勿捏造或猜测任何医疗事实。\n"
-            "4. 回答结构：在进行详细的医学解读或建议之前，**必须**先在回答的最开头提供一段简明扼要的「深度总结（核心结论）」，让患者或家属能一眼看懂核心要点，然后再分段或分点进行详细的解读。\n"
-            "5. 引用格式：当你的回答参考了检索到的文档块时，**必须**在引用的句子末尾使用 [1] 或 [2][3] 这样的内联序号标注来源。\n"
-            "6. 名词解释：当你提到重要的医学术语、治疗方案、药物或解剖学名词时，**必须**使用 HTML 标签包裹它以提供解释，格式为：<span class=\"concept-tooltip\" data-desc=\"简短的术语解释或定义\">医学名词</span>。这样用户可以在前端点击查看解释。\n"
-            "7. 如果工具返回了退步问题（Step-back）相关的解答，请结合该普遍原理来回答，但不要在最终回复中暴露思考过程（chain-of-thought）。\n"
-            "请始终用中文和用户进行自然、流畅、通俗易懂的交流。"
-        ),
+        system_prompt=base_system_prompt,
     )
-    return agent, model
+    return agent, model, fast_model
 
 
-agent, model = create_agent_instance()
+agent, model, fast_model = create_agent_instance()
 
 storage = ConversationStorage()
+profile_manager = ProfileManager()
 
 def summarize_old_messages(model, messages: list) -> str:
     """将旧消息总结为摘要"""
@@ -162,6 +185,38 @@ def summarize_old_messages(model, messages: list) -> str:
 
 class FollowUpQuestions(BaseModel):
     questions: list[str] = Field(description="3个最相关、最可能的追问问题")
+
+async def optimize_user_question(user_text: str, llm_model) -> list[str]:
+    """后台异步优化用户提问，使其更专业、更易于大模型理解"""
+    if not user_text.strip():
+        return []
+    try:
+        prompt = (
+            "你是一个医疗问答提示词优化专家。用户输入了一个初步的鼻咽癌相关提问，请帮用户扩充、优化成 3 个不同侧重、更具体、有助于大模型给出精准医学回答的问题。\n"
+            "要求：\n"
+            "1. 问题必须非常精炼、直接，不要寒暄。\n"
+            "2. 语言要自然、准确，不需要过度追求复杂的循证医学词汇，但要能清晰表达医学意图。\n"
+            "3. 只需返回 JSON 数组，严禁其他解释或 markdown 标记。\n"
+            "【示例】\n"
+            "如果用户原始提问是：鼻咽癌化疗吃不下饭怎么办\n"
+            '你应该输出形如：["鼻咽癌化疗期间食欲不振的管理策略", "鼻咽癌化疗相关厌食的循证干预措施", "鼻咽癌化疗患者营养支持的最佳实践"]\n\n'
+            f"用户原始提问：{user_text}\n"
+        )
+        
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, lambda: llm_model.invoke([SystemMessage(content=prompt)]))
+        
+        content = res.content.strip()
+        if content.startswith("```"):
+            content = content.strip("`").replace("json", "", 1).strip()
+            
+        questions = json.loads(content)
+        if isinstance(questions, list):
+            return questions[:3]
+        return []
+    except Exception as e:
+        print(f"Optimize question error: {e}")
+        return []
 
 async def _generate_follow_ups(user_text: str, prev_messages: list, llm_model) -> list[str]:
     """后台异步生成追问问题，不阻塞主流式输出"""
@@ -211,6 +266,10 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
     
+    # 动态加载针对当前患者记忆的 Agent
+    profile = profile_manager.load_profile(user_id)
+    dynamic_agent, _, _ = create_agent_instance(profile=profile)
+
     if len(messages) > 50:
         summary = summarize_old_messages(model, messages[:40])
 
@@ -219,7 +278,7 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
         ] + messages[40:]
 
     messages.append(HumanMessage(content=user_text))
-    result = agent.invoke(
+    result = dynamic_agent.invoke(
         {"messages": messages},
         config={"recursion_limit": 8},
     )
@@ -267,6 +326,10 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
     # 统一输出队列：所有事件（content / rag_step）都汇入这里
     output_queue = asyncio.Queue()
 
+    # 动态加载针对当前患者记忆的 Agent
+    profile = profile_manager.load_profile(user_id)
+    dynamic_agent, _, _ = create_agent_instance(profile=profile)
+
     class _RagStepProxy:
         """代理对象：将 emit_rag_step 的原始 step dict 包装后放入统一输出队列。"""
         def put_nowait(self, step):
@@ -291,7 +354,7 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
         """后台任务：运行 agent 并将内容 chunk 推入输出队列。"""
         nonlocal full_response
         try:
-            async for msg, metadata in agent.astream(
+            async for msg, metadata in dynamic_agent.astream(
                 {"messages": messages},
                 stream_mode="messages",
                 config={"recursion_limit": 8},

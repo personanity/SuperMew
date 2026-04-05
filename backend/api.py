@@ -18,24 +18,55 @@ from schemas import (
     DocumentUploadResponse,
     DocumentDeleteResponse,
 )
-from agent import chat_with_agent, chat_with_agent_stream, storage
+from pydantic import BaseModel
+from agent import chat_with_agent, chat_with_agent_stream, storage, optimize_user_question, model, fast_model
 from document_loader import DocumentLoader
 from parent_chunk_store import ParentChunkStore
 from milvus_writer import MilvusWriter
 from milvus_client import MilvusManager
 from embedding import EmbeddingService
+from profile_manager import ProfileManager
+from fastapi import Form
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
 UPLOAD_DIR = DATA_DIR / "documents"
+PROFILE_DOC_DIR = DATA_DIR / "profile_docs"
 
 loader = DocumentLoader()
 parent_chunk_store = ParentChunkStore()
 milvus_manager = MilvusManager()
 embedding_service = EmbeddingService()
 milvus_writer = MilvusWriter(embedding_service=embedding_service, milvus_manager=milvus_manager)
+profile_manager = ProfileManager()
 
 router = APIRouter()
+
+@router.get("/profile/{user_id}")
+async def get_user_profile(user_id: str):
+    """获取用户个人档案"""
+    try:
+        profile = profile_manager.load_profile(user_id)
+        return {"profile": profile}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/profile/upload")
+async def upload_personal_record(user_id: str = Form(...), file: UploadFile = File(...)):
+    """上传病历并提取多模态个人档案"""
+    try:
+        filename = file.filename
+        os.makedirs(PROFILE_DOC_DIR, exist_ok=True)
+        file_path = PROFILE_DOC_DIR / filename
+        
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+            
+        profile_data = profile_manager.process_medical_record(user_id, str(file_path), filename)
+        return {"message": "病历解析成功", "profile": profile_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"病历解析失败: {str(e)}")
 
 
 @router.get("/sessions/{user_id}/{session_id}", response_model=SessionMessagesResponse)
@@ -98,6 +129,21 @@ async def delete_session(user_id: str, session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class OptimizeRequest(BaseModel):
+    message: str
+
+class OptimizeResponse(BaseModel):
+    questions: list[str]
+
+@router.post("/chat/optimize", response_model=OptimizeResponse)
+async def optimize_endpoint(request: OptimizeRequest):
+    """优化用户的初步提问"""
+    try:
+        questions = await optimize_user_question(request.message, fast_model)
+        return OptimizeResponse(questions=questions)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     try:
@@ -159,6 +205,7 @@ async def list_documents():
         milvus_manager.init_collection()
 
         results = milvus_manager.query(
+            filter_expr='id > 0',
             output_fields=["filename", "file_type"],
             limit=10000,
         )

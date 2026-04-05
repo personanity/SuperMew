@@ -23,7 +23,15 @@ createApp({
             showTooltip: false,
             tooltipText: '',
             tooltipX: 0,
-            tooltipY: 0
+            tooltipY: 0,
+            // 个人档案相关
+            userProfile: null,
+            selectedProfileFile: null,
+            isUploadingProfile: false,
+            profileProgress: '',
+            // 提问优化
+            optimizedQuestions: [],
+            isOptimizing: false
         };
     },
     mounted() {
@@ -35,6 +43,7 @@ createApp({
         } else {
             localStorage.setItem('userId', this.userId);
         }
+        this.loadProfile();
         
         // 事件委托处理点击引用跳转
         if (this.$refs.chatContainer) {
@@ -185,6 +194,44 @@ createApp({
             this.handleSend();
         },
 
+        async handleOptimize() {
+            const text = this.userInput.trim();
+            if (!text || this.isOptimizing) return;
+            this.isOptimizing = true;
+            try {
+                const res = await fetch('/chat/optimize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.questions && data.questions.length > 0) {
+                        this.optimizedQuestions = data.questions;
+                    } else {
+                        alert('未能生成优化提问，请尝试修改输入。');
+                    }
+                } else {
+                    alert('优化提问请求失败，请稍后再试。');
+                }
+            } catch (e) {
+                console.error(e);
+            } finally {
+                this.isOptimizing = false;
+            }
+        },
+
+        applyOptimizedQuestion(q) {
+            this.userInput = q;
+            this.optimizedQuestions = [];
+            this.$nextTick(() => {
+                if (this.$refs.textarea) {
+                    this.$refs.textarea.focus();
+                    this.autoResize({ target: this.$refs.textarea });
+                }
+            });
+        },
+
         escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -216,7 +263,9 @@ createApp({
         async handleSend() {
             const text = this.userInput.trim();
             if (!text || this.isLoading || this.isComposing) return;
-
+            
+            this.optimizedQuestions = []; // 发送前清空优化建议
+            
             // Add user message
             this.messages.push({
                 text: text,
@@ -451,6 +500,82 @@ createApp({
             this.loadDocuments();
         },
         
+        handleProfile() {
+            this.activeNav = 'profile';
+            this.showHistorySidebar = false;
+            this.loadProfile();
+        },
+
+        async loadProfile() {
+            try {
+                const response = await fetch(`/profile/${this.userId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    this.userProfile = data.profile;
+                }
+            } catch (error) {
+                console.error("加载个人档案失败", error);
+            }
+        },
+
+        handleProfileSelect(event) {
+            const files = event.target.files;
+            if (files && files.length > 0) {
+                this.selectedProfileFile = files[0];
+                this.profileProgress = '';
+            }
+        },
+
+        async uploadProfile() {
+            if (!this.selectedProfileFile) {
+                alert('请先选择病历文件');
+                return;
+            }
+            
+            this.isUploadingProfile = true;
+            this.profileProgress = '正在使用多模态大模型解析病历资料，请稍候...';
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', this.selectedProfileFile);
+                formData.append('user_id', this.userId);
+                
+                const response = await fetch('/profile/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Upload failed');
+                }
+                
+                const data = await response.json();
+                this.profileProgress = data.message;
+                this.userProfile = data.profile;
+                
+                // 清空选择
+                this.selectedProfileFile = null;
+                if (this.$refs.profileInput) {
+                    this.$refs.profileInput.value = '';
+                }
+                
+            } catch (error) {
+                console.error('Error uploading profile:', error);
+                this.profileProgress = '解析失败：' + error.message;
+            } finally {
+                this.isUploadingProfile = false;
+            }
+        },
+
+        sendProfileFollowUp(question) {
+            this.activeNav = 'newChat';
+            this.userInput = question;
+            this.$nextTick(() => {
+                this.handleSend();
+            });
+        },
+
         async loadDocuments() {
             this.documentsLoading = true;
             try {

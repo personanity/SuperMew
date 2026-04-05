@@ -29,7 +29,10 @@
                     <i class="fas fa-history"></i> 历史记录
                 </button>
                 <button @click="handleSettings" :class="['nav-btn', {active: activeNav === 'settings'}]">
-                    <i class="fas fa-cog"></i> 设置
+                    <i class="fas fa-cog"></i> 知识库设置
+                </button>
+                <button @click="handleProfile" :class="['nav-btn', {active: activeNav === 'profile'}]">
+                    <i class="fas fa-user-md"></i> 个人档案
                 </button>
             </nav>
             <div class="sidebar-footer">
@@ -118,6 +121,81 @@
                 </div>
             </div>
 
+            <!-- Profile Panel -->
+            <div v-if="activeNav === 'profile'" class="settings-panel">
+                <div class="settings-header">
+                    <h2><i class="fas fa-user-md"></i> 我的病历档案</h2>
+                    <p>上传您的检查报告、病历资料，大模型将自动提取并记录您的健康信息以提供专属建议。</p>
+                </div>
+
+                <div class="upload-section">
+                    <h3><i class="fas fa-file-medical"></i> 上传病历资料</h3>
+                    <div class="upload-area">
+                        <input 
+                            type="file" 
+                            ref="profileInput" 
+                            @change="handleProfileSelect"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            style="display: none"
+                        />
+                        <button @click="$refs.profileInput.click()" class="upload-btn" style="background: linear-gradient(135deg, #a8c0ff, #3f2b96);">
+                            <i class="fas fa-camera"></i> 选择图片或PDF
+                        </button>
+                        <div v-if="selectedProfileFile" class="selected-file">
+                            <i class="fas fa-file-medical-alt"></i> {{ selectedProfileFile.name }}
+                            <button @click="uploadProfile" class="btn-primary" :disabled="isUploadingProfile" style="background-color: #3f2b96;">
+                                <i class="fas fa-upload"></i> {{ isUploadingProfile ? '多模态解析中...' : '开始提取' }}
+                            </button>
+                        </div>
+                        <div v-if="profileProgress" class="upload-progress">
+                            {{ profileProgress }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="documents-section" v-if="userProfile && Object.keys(userProfile).length > 0">
+                    <h3><i class="fas fa-clipboard-list"></i> 健康档案摘要</h3>
+                    <div class="profile-card">
+                        <div class="profile-row"><span class="profile-label">姓名:</span> <span class="profile-value">{{ userProfile.name || '未知' }}</span></div>
+                        <div class="profile-row"><span class="profile-label">性别/年龄:</span> <span class="profile-value">{{ userProfile.gender || '未知' }} / {{ userProfile.age || '未知' }}</span></div>
+                        <div class="profile-row"><span class="profile-label">病历时间:</span> <span class="profile-value">{{ userProfile.record_date || '未知' }}</span></div>
+                        <div class="profile-row"><span class="profile-label">诊断分期:</span> <span class="profile-value">{{ userProfile.diagnosis || '未知' }} ({{ userProfile.stage || '未知' }})</span></div>
+                        <div class="profile-row" v-if="userProfile.medical_summary" style="flex-direction: column; gap: 8px;">
+                            <span class="profile-label"><i class="fas fa-brain"></i> AI 长效记忆总结:</span>
+                            <span class="profile-value" style="background: rgba(63, 43, 150, 0.05); padding: 10px; border-radius: 8px; line-height: 1.5; font-size: 0.9rem;">
+                                {{ userProfile.medical_summary }}
+                            </span>
+                        </div>
+                        
+                        <div class="profile-row" v-if="userProfile.test_items && userProfile.test_items.length > 0" style="flex-direction: column; border-bottom: none; gap: 15px; margin-top: 10px;">
+                            <span class="profile-label" style="margin-bottom: 5px;"><i class="fas fa-vials"></i> 详细化验指标:</span>
+                            <div class="table-responsive">
+                                <table class="test-items-table">
+                                    <thead>
+                                        <tr>
+                                            <th>项目名称</th>
+                                            <th>结果</th>
+                                            <th>单位</th>
+                                            <th>参考区间</th>
+                                            <th>异常提示</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="(item, idx) in userProfile.test_items" :key="idx">
+                                            <td class="item-name">{{ item.item_name }}</td>
+                                            <td :class="{'abnormal-val': item.abnormal && item.abnormal !== '正常'}">{{ item.result }}</td>
+                                            <td>{{ item.unit }}</td>
+                                            <td>{{ item.reference_range }}</td>
+                                            <td :class="{'abnormal-text': item.abnormal && item.abnormal !== '正常'}">{{ item.abnormal }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- History Sidebar -->
             <div v-if="showHistorySidebar" class="history-sidebar">
                 <div class="history-header">
@@ -156,8 +234,8 @@
                 </div>
             </div>
 
-            <!-- Chat Area (hidden when settings is active) -->
-            <div v-show="activeNav !== 'settings'" class="chat-area">
+            <!-- Chat Area (hidden when settings or profile is active) -->
+            <div v-show="activeNav === 'newChat' || activeNav === 'history'" class="chat-area">
                 <header class="chat-header">
                     <div class="header-info">
                         <div class="status-dot"></div>
@@ -172,7 +250,7 @@
                 <div v-if="messages.length === 0" class="welcome-screen">
                     <div class="big-avatar">🐱</div>
                     <h3>你好呀！我是喵喵</h3>
-                    <p>我可以帮你写代码、回答问题，或者只是陪你聊天~ 喵！</p>
+                    <p style="color: var(--text-light); font-size: 0.95rem; margin-bottom: 20px;">我是专为鼻咽癌患者及家属打造的智能问答助手，你可以向我提问关于病情、治疗、副作用等方面的问题。</p>
                 </div>
                 
                 <!-- Messages -->
@@ -341,6 +419,25 @@
             </div>
 
             <div class="input-area-wrapper">
+                <div v-if="optimizedQuestions && optimizedQuestions.length > 0" class="optimized-questions-popup">
+                    <div class="optimized-header">
+                        <span>● 提问优化：我为你推荐了以下更加专业的问题：</span>
+                        <button @click="optimizedQuestions = []" class="close-btn" title="关闭"><i class="fas fa-times"></i></button>
+                    </div>
+                    <ul class="optimized-list">
+                        <li v-for="(q, idx) in optimizedQuestions" :key="idx">
+                            <a href="#" @click.prevent="applyOptimizedQuestion(q)">{{ q }}</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="preset-functions-wrapper">
+                    <span class="preset-func-label">预设功能：</span>
+                    <button class="preset-tag-small" @click="sendFollowUp('请帮我查询关于鼻咽癌的最新诊疗指南。')"><i class="fas fa-book-medical"></i> 指南查询</button>
+                    <button class="preset-tag-small" @click="sendFollowUp('请帮我详细解读我上传的病历报告和化验指标，告诉我目前的病情和注意事项。')"><i class="fas fa-microscope"></i> 报告解读</button>
+                    <button class="preset-tag-small highlight-btn" @click="handleOptimize" :disabled="!userInput.trim() || isOptimizing">
+                        <i class="fas fa-magic" :class="{'fa-spin': isOptimizing}"></i> {{ isOptimizing ? '优化中...' : '提问优化' }}
+                    </button>
+                </div>
                 <div class="input-area">
                     <button class="attach-btn"><i class="fas fa-paperclip"></i></button>
                     <textarea 
