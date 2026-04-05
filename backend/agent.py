@@ -37,6 +37,9 @@ class ConversationStorage:
 
         if user_id not in data:
             data[user_id] = {}
+            
+        existing_meta = data[user_id].get(session_id, {}).get("metadata", {})
+        merged_meta = {**existing_meta, **(metadata or {})}
 
         serialized = []
         for idx, msg in enumerate(messages):
@@ -53,7 +56,7 @@ class ConversationStorage:
 
         data[user_id][session_id] = {
             "messages": serialized,
-            "metadata": metadata or {},
+            "metadata": merged_meta,
             "updated_at": datetime.now().isoformat()
         }
 
@@ -311,13 +314,30 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
     }
 
 
-async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", session_id: str = "default_session"):
+async def generate_session_title(user_text: str, llm_model) -> str:
+    """后台异步生成会话标题"""
+    try:
+        prompt = f"请根据用户的首次提问，生成一个简短的对话标题（控制在10个字以内，不要带有标点符号）。\n用户提问：{user_text}"
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, lambda: llm_model.invoke([SystemMessage(content=prompt)]))
+        title = res.content.strip().strip('"').strip('。')
+        return title
+    except Exception as e:
+        print(f"Title generation error: {e}")
+        return "新会话"
+
+from tools import set_rag_config
+
+async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", session_id: str = "default_session", think_mode: str = "normal"):
     """使用 Agent 处理用户消息并流式返回响应。
     
     架构：使用统一输出队列 + 后台任务，确保 RAG 检索步骤在工具执行期间实时推送，
     而非等待工具完成后才显示。
     """
+    set_rag_config({"think_mode": think_mode})
+    
     messages = storage.load(user_id, session_id)
+    is_first_message = len(messages) == 0
 
     # 清理可能残留的 RAG 上下文
     get_last_rag_context(clear=True)
@@ -429,6 +449,11 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
     yield "data: [DONE]\n\n"
 
     # 保存对话
+    metadata = {}
+    if is_first_message:
+        title = await generate_session_title(user_text, fast_model)
+        metadata["title"] = title
+
     messages.append(AIMessage(content=full_response))
     extra_message_data = [None] * (len(messages) - 1) + [{"rag_trace": rag_trace}]
-    storage.save(user_id, session_id, messages, extra_message_data=extra_message_data)
+    storage.save(user_id, session_id, messages, metadata=metadata, extra_message_data=extra_message_data)

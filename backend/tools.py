@@ -13,6 +13,17 @@ _LAST_RAG_CONTEXT = None
 _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
 _RAG_STEP_QUEUE = None  # asyncio.Queue, set by agent before streaming
 _RAG_STEP_LOOP = None   # asyncio loop, captured when setting queue
+_RAG_CONFIG = {}
+
+
+def set_rag_config(config: dict):
+    global _RAG_CONFIG
+    _RAG_CONFIG = config
+
+
+def get_rag_config() -> dict:
+    global _RAG_CONFIG
+    return _RAG_CONFIG
 
 
 def _set_last_rag_context(context: dict):

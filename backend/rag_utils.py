@@ -277,8 +277,25 @@ def _compute_rrf(*result_lists: List[List[dict]], k: int = 60, top_k: int = 5) -
     return fused_docs
 
 
+from tools import get_rag_config
+
 def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
-    candidate_k = max(top_k * 3, top_k)
+    config = get_rag_config()
+    think_mode = config.get("think_mode", "normal")
+    
+    if think_mode == "fast":
+        candidate_k = 10
+        final_top_k = 10
+        skip_rerank = True
+    elif think_mode == "deep":
+        candidate_k = 30
+        final_top_k = 10
+        skip_rerank = False
+    else: # normal
+        candidate_k = 15
+        final_top_k = 15
+        skip_rerank = True
+        
     filter_expr = f"chunk_level == {LEAF_RETRIEVE_LEVEL}"
     
     dense_embedding = []
@@ -354,9 +371,23 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
 
     # 重新排序并使用自动合并 (Auto-merging) 与 Reranker
     try:
-        reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
-        merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
-        rerank_meta["retrieval_mode"] = "hybrid_3way_rrf"
+        if skip_rerank:
+            for i, doc in enumerate(retrieved[:final_top_k], 1):
+                doc["rerank_score"] = doc.get("rrf_score", 0.0)
+            reranked = retrieved[:final_top_k]
+            rerank_meta = {
+                "rerank_enabled": False,
+                "rerank_applied": False,
+                "rerank_model": None,
+                "rerank_endpoint": None,
+                "rerank_error": "skipped_by_think_mode",
+                "candidate_count": len(retrieved),
+            }
+        else:
+            reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=final_top_k)
+            
+        merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=final_top_k)
+        rerank_meta["retrieval_mode"] = f"hybrid_3way_rrf_{think_mode}"
         rerank_meta["candidate_k"] = candidate_k
         rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
         rerank_meta["dense_count"] = len(dense_results)
@@ -366,14 +397,14 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
         return {"docs": merged_docs, "meta": rerank_meta}
     except Exception as e:
         return {
-            "docs": retrieved[:top_k],
+            "docs": retrieved[:final_top_k],
             "meta": {
                 "rerank_enabled": bool(RERANK_MODEL and RERANK_API_KEY and RERANK_BINDING_HOST),
                 "rerank_applied": False,
                 "rerank_model": RERANK_MODEL,
                 "rerank_endpoint": _get_rerank_endpoint(),
                 "rerank_error": f"process_error: {e}",
-                "retrieval_mode": "hybrid_3way_rrf",
+                "retrieval_mode": f"hybrid_3way_rrf_{think_mode}",
                 "candidate_k": candidate_k,
                 "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
                 "dense_count": len(dense_results),

@@ -35,7 +35,9 @@ createApp({
             chartInstance: null,
             // 提问优化
             optimizedQuestions: [],
-            isOptimizing: false
+            isOptimizing: false,
+            // 思考模式
+            thinkMode: 'normal'
         };
     },
     computed: {
@@ -315,7 +317,8 @@ createApp({
                     body: JSON.stringify({ 
                         message: text,
                         user_id: this.userId,
-                        session_id: this.sessionId
+                        session_id: this.sessionId,
+                        think_mode: this.thinkMode
                     }),
                     signal: this.abortController.signal,
                 });

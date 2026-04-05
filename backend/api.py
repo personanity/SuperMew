@@ -103,10 +103,13 @@ async def list_sessions(user_id: str):
         
         sessions = []
         for session_id, session_data in data[user_id].items():
+            metadata = session_data.get("metadata", {})
+            title = metadata.get("title")
             sessions.append(SessionInfo(
                 session_id=session_id,
                 updated_at=session_data.get("updated_at", ""),
-                message_count=len(session_data.get("messages", []))
+                message_count=len(session_data.get("messages", [])),
+                title=title
             ))
         
         # 按更新时间倒序排列
@@ -180,7 +183,8 @@ async def chat_stream_endpoint(request: ChatRequest):
             async for chunk in chat_with_agent_stream(
                 request.message, 
                 request.user_id, 
-                request.session_id
+                request.session_id,
+                request.think_mode
             ):
                 yield chunk
         except Exception as e:

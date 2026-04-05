@@ -6,6 +6,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: Optional[str] = "default_user"
     session_id: Optional[str] = "default_session"
+    think_mode: Optional[str] = "normal"
 
 
 class RetrievedChunk(BaseModel):
@@ -73,6 +74,7 @@ class SessionInfo(BaseModel):
     session_id: str
     updated_at: str
     message_count: int
+    title: Optional[str] = None
 
 
 class SessionListResponse(BaseModel):

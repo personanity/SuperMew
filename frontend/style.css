@@ -203,6 +203,40 @@ body {
     color: var(--text-color);
 }
 
+.think-mode-selector {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: #fdfdfd;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    border: 1px solid rgba(0,0,0,0.05);
+}
+
+.mode-label {
+    color: var(--primary-color);
+    font-weight: 700;
+}
+
+.mode-radio {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-color);
+    transition: all 0.2s ease;
+}
+
+.mode-radio:hover {
+    color: #444;
+}
+
+.mode-radio input {
+    accent-color: var(--primary-color);
+    cursor: pointer;
+}
+
 /* Chat Area */
 .chat-container {
     flex: 1;
