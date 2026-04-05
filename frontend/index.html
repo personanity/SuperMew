@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="vendor/css/atom-one-light.min.css">
     <script src="vendor/js/highlight.min.js"></script>
     <script src="vendor/js/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div id="app" class="app-wrapper">
@@ -138,13 +139,22 @@
                             accept=".pdf,.jpg,.jpeg,.png"
                             style="display: none"
                         />
-                        <button @click="$refs.profileInput.click()" class="upload-btn" style="background: linear-gradient(135deg, #a8c0ff, #3f2b96);">
+                        <div class="upload-buttons" style="display: flex; gap: 10px;" v-if="userProfile && Object.keys(userProfile).length > 0">
+                            <button @click="triggerProfileUpload('update')" class="upload-btn" style="background: linear-gradient(135deg, #a8c0ff, #3f2b96);">
+                                <i class="fas fa-plus-circle"></i> 更新本人病历
+                            </button>
+                            <button @click="triggerProfileUpload('replace')" class="btn-secondary" style="margin-bottom: 0;">
+                                <i class="fas fa-exchange-alt"></i> 更换其他病历
+                            </button>
+                        </div>
+                        <button v-else @click="triggerProfileUpload('replace')" class="upload-btn" style="background: linear-gradient(135deg, #a8c0ff, #3f2b96);">
                             <i class="fas fa-camera"></i> 选择图片或PDF
                         </button>
+
                         <div v-if="selectedProfileFile" class="selected-file">
                             <i class="fas fa-file-medical-alt"></i> {{ selectedProfileFile.name }}
                             <button @click="uploadProfile" class="btn-primary" :disabled="isUploadingProfile" style="background-color: #3f2b96;">
-                                <i class="fas fa-upload"></i> {{ isUploadingProfile ? '多模态解析中...' : '开始提取' }}
+                                <i class="fas fa-upload"></i> {{ isUploadingProfile ? '多模态解析中...' : (uploadMode === 'update' ? '追加更新' : '开始提取') }}
                             </button>
                         </div>
                         <div v-if="profileProgress" class="upload-progress">
@@ -168,11 +178,17 @@
                         </div>
                         
                         <div class="profile-row" v-if="userProfile.test_items && userProfile.test_items.length > 0" style="flex-direction: column; border-bottom: none; gap: 15px; margin-top: 10px;">
-                            <span class="profile-label" style="margin-bottom: 5px;"><i class="fas fa-vials"></i> 详细化验指标:</span>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                <span class="profile-label"><i class="fas fa-vials"></i> 详细化验指标:</span>
+                                <button class="btn-primary" style="background-color: #3f2b96; padding: 6px 12px; font-size: 0.85rem;" @click="showChartModal = true">
+                                    <i class="fas fa-chart-line"></i> 查看指标趋势图
+                                </button>
+                            </div>
                             <div class="table-responsive">
                                 <table class="test-items-table">
                                     <thead>
                                         <tr>
+                                            <th>化验时间</th>
                                             <th>项目名称</th>
                                             <th>结果</th>
                                             <th>单位</th>
@@ -182,6 +198,7 @@
                                     </thead>
                                     <tbody>
                                         <tr v-for="(item, idx) in userProfile.test_items" :key="idx">
+                                            <td>{{ item.record_date || '未知' }}</td>
                                             <td class="item-name">{{ item.item_name }}</td>
                                             <td :class="{'abnormal-val': item.abnormal && item.abnormal !== '正常'}">{{ item.result }}</td>
                                             <td>{{ item.unit }}</td>
@@ -191,6 +208,25 @@
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Chart Modal -->
+                <div v-if="showChartModal" class="chart-modal-overlay" @click.self="showChartModal = false">
+                    <div class="chart-modal-content">
+                        <div class="chart-modal-header">
+                            <h3><i class="fas fa-chart-line"></i> 检验指标趋势分析</h3>
+                            <button @click="showChartModal = false" class="close-btn"><i class="fas fa-times"></i></button>
+                        </div>
+                        <div class="chart-controls" style="margin-bottom: 15px;">
+                            <label style="font-weight: 600; color: var(--text-color);">选择要观察的指标：</label>
+                            <select v-model="selectedChartIndicator" @change="renderChart" style="padding: 6px; border-radius: 6px; border: 1px solid #ccc; font-family: inherit;">
+                                <option v-for="name in uniqueTestItemNames" :key="name" :value="name">{{ name }}</option>
+                            </select>
+                        </div>
+                        <div class="chart-container" style="position: relative; height: 300px; width: 100%;">
+                            <canvas id="indicatorChart"></canvas>
                         </div>
                     </div>
                 </div>

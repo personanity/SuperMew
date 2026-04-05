@@ -27,6 +27,7 @@ class DetailedTestResult(BaseModel):
     unit: str = Field(default="", description="单位，如'# mol/L'")
     reference_range: str = Field(default="", description="参考区间，如'0.0~10.0'")
     abnormal: str = Field(default="", description="是否异常（偏高/偏低/正常），如根据参考值判断")
+    record_date: str = Field(default="", description="该化验项目的出具日期，如'2023-10-15'")
 
 class PatientProfile(BaseModel):
     name: str = Field(default="", description="患者姓名（如病历中包含）")
@@ -103,31 +104,48 @@ class ProfileManager:
             print(f"Fallback text extraction failed: {e}")
             return ""
 
-    def process_medical_record(self, user_id: str, file_path: str, filename: str) -> dict:
+    def process_medical_record(self, user_id: str, file_path: str, filename: str, is_update: bool = False) -> dict:
         """多模态处理病历文件并保存结构化档案"""
         llm = self._get_llm()
 
-        content_parts = [
-            {"type": "text", "text": f"请作为一位专业的肿瘤科医生，分析这份上传的病历资料（文件名：{filename}）。"
-                                     "这份资料可能是图片或文本，请提取出患者的核心医疗信息，"
-                                     "并根据病情给出 3-5 个推荐患者向您提问的个性化问题。\n\n"
-                                     "【重要要求】你必须且只能输出一段合法的 JSON 文本，不要有任何多余的标记（如 ```json）或解释。\n"
-                                     "JSON 必须严格包含以下字段：\n"
-                                     "{\n"
-                                     '  "name": "患者姓名（如病历中包含）",\n'
-                                     '  "age": "患者年龄",\n'
-                                     '  "gender": "患者性别",\n'
-                                     '  "record_date": "病历或检查报告的时间（例如：2023-10-15）",\n'
-                                     '  "diagnosis": "主要诊断（例如：鼻咽癌）",\n'
-                                     '  "stage": "肿瘤分期（如：TNM分期、临床分期）",\n'
-                                     '  "treatment_history": "既往治疗史（如化疗、放疗方案及时间）",\n'
-                                     '  "lab_results": "关键检验/病理结果（总体文本描述）",\n'
-                                     '  "test_items": [{"item_name": "项目名如总胆红素", "result": "值", "unit": "单位", "reference_range": "参考区间", "abnormal": "异常提示"}],\n'
-                                     '  "current_status": "当前病情或症状描述",\n'
-                                     '  "medical_summary": "请用一段连贯、专业的文字总结上述所有核心病情，这将被大模型永久记忆，要求高度概括、准确",\n'
-                                     '  "suggested_questions": ["问题1", "问题2", "问题3"]\n'
-                                     "}\n"}
-        ]
+        base_prompt = (
+            f"请作为一位专业的肿瘤科医生，分析这份上传的病历资料（文件名：{filename}）。"
+            "这份资料可能是图片或文本，请提取出患者的核心医疗信息，"
+            "并根据病情给出 3-5 个推荐患者向您提问的个性化问题。\n\n"
+        )
+
+        if is_update:
+            existing_profile = self.load_profile(user_id)
+            existing_json = json.dumps(existing_profile, ensure_ascii=False)
+            base_prompt += (
+                f"【患者历史档案】\n{existing_json}\n\n"
+                "【更新指令】\n"
+                "这是一份新的病历资料。请你提取这份新资料中的信息，并**将它与上面的历史档案进行融合更新**。\n"
+                "1. 对于基本信息（姓名、性别等）若新资料未提及，请保留历史数据。\n"
+                "2. **对于详细化验指标 `test_items`，请必须保留历史档案中的全部指标记录，并将新资料中提取到的化验结果追加（append）到该列表中，注意一定要写对每一个指标出具的 `record_date`（化验时间）！**\n"
+                "3. **更新长效记忆** `medical_summary`：结合新老病历的数据，总结出病情的发展、治疗的演进和最近的关键变化。\n\n"
+            )
+
+        base_prompt += (
+            "【重要要求】你必须且只能输出一段合法的 JSON 文本，不要有任何多余的标记（如 ```json）或解释。\n"
+            "JSON 必须严格包含以下字段：\n"
+            "{\n"
+            '  "name": "患者姓名（如病历中包含）",\n'
+            '  "age": "患者年龄",\n'
+            '  "gender": "患者性别",\n'
+            '  "record_date": "最新一次病历或检查报告的时间（例如：2023-10-15）",\n'
+            '  "diagnosis": "主要诊断（例如：鼻咽癌）",\n'
+            '  "stage": "肿瘤分期（如：TNM分期、临床分期）",\n'
+            '  "treatment_history": "既往治疗史（如化疗、放疗方案及时间）",\n'
+            '  "lab_results": "关键检验/病理结果（总体文本描述）",\n'
+            '  "test_items": [{"item_name": "项目名如总胆红素", "result": "值", "unit": "单位", "reference_range": "参考区间", "abnormal": "异常提示", "record_date": "该化验项目的时间"}],\n'
+            '  "current_status": "当前病情或症状描述",\n'
+            '  "medical_summary": "请用一段连贯、专业的文字总结上述所有核心病情（如果是更新操作请包含病情演进过程），这将被大模型永久记忆，要求高度概括、准确",\n'
+            '  "suggested_questions": ["问题1", "问题2", "问题3"]\n'
+            "}\n"
+        )
+
+        content_parts = [{"type": "text", "text": base_prompt}]
 
         if HAS_FITZ:
             images = self._extract_images_from_pdf(file_path)

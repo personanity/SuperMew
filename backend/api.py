@@ -52,7 +52,7 @@ async def get_user_profile(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/profile/upload")
-async def upload_personal_record(user_id: str = Form(...), file: UploadFile = File(...)):
+async def upload_personal_record(user_id: str = Form(...), is_update: str = Form("false"), file: UploadFile = File(...)):
     """上传病历并提取多模态个人档案"""
     try:
         filename = file.filename
@@ -63,7 +63,8 @@ async def upload_personal_record(user_id: str = Form(...), file: UploadFile = Fi
             content = await file.read()
             f.write(content)
             
-        profile_data = profile_manager.process_medical_record(user_id, str(file_path), filename)
+        update_flag = is_update.lower() == "true"
+        profile_data = profile_manager.process_medical_record(user_id, str(file_path), filename, is_update=update_flag)
         return {"message": "病历解析成功", "profile": profile_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"病历解析失败: {str(e)}")

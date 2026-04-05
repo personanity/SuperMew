@@ -29,10 +29,21 @@ createApp({
             selectedProfileFile: null,
             isUploadingProfile: false,
             profileProgress: '',
+            uploadMode: 'replace',
+            showChartModal: false,
+            selectedChartIndicator: '',
+            chartInstance: null,
             // 提问优化
             optimizedQuestions: [],
             isOptimizing: false
         };
+    },
+    computed: {
+        uniqueTestItemNames() {
+            if (!this.userProfile || !this.userProfile.test_items) return [];
+            const names = this.userProfile.test_items.map(item => item.item_name);
+            return [...new Set(names)].filter(Boolean);
+        }
     },
     mounted() {
         this.configureMarked();
@@ -526,6 +537,13 @@ createApp({
             }
         },
 
+        triggerProfileUpload(mode) {
+            this.uploadMode = mode;
+            if (this.$refs.profileInput) {
+                this.$refs.profileInput.click();
+            }
+        },
+
         async uploadProfile() {
             if (!this.selectedProfileFile) {
                 alert('请先选择病历文件');
@@ -539,6 +557,7 @@ createApp({
                 const formData = new FormData();
                 formData.append('file', this.selectedProfileFile);
                 formData.append('user_id', this.userId);
+                formData.append('is_update', this.uploadMode === 'update' ? 'true' : 'false');
                 
                 const response = await fetch('/profile/upload', {
                     method: 'POST',
@@ -573,6 +592,60 @@ createApp({
             this.userInput = question;
             this.$nextTick(() => {
                 this.handleSend();
+            });
+        },
+
+        renderChart() {
+            if (!this.selectedChartIndicator || !this.userProfile || !this.userProfile.test_items) return;
+            
+            const dataPoints = this.userProfile.test_items.filter(item => item.item_name === this.selectedChartIndicator);
+            
+            // Sort by date (assuming YYYY-MM-DD format)
+            dataPoints.sort((a, b) => new Date(a.record_date || 0) - new Date(b.record_date || 0));
+            
+            const labels = dataPoints.map(item => item.record_date || '未知时间');
+            const values = dataPoints.map(item => parseFloat(item.result) || 0);
+
+            this.$nextTick(() => {
+                const ctx = document.getElementById('indicatorChart');
+                if (!ctx) return;
+                
+                if (this.chartInstance) {
+                    this.chartInstance.destroy();
+                }
+                
+                this.chartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: this.selectedChartIndicator,
+                            data: values,
+                            borderColor: '#3f2b96',
+                            backgroundColor: 'rgba(63, 43, 150, 0.1)',
+                            borderWidth: 2,
+                            pointBackgroundColor: '#ff6b6b',
+                            pointRadius: 4,
+                            fill: true,
+                            tension: 0.2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false
+                            }
+                        }
+                    }
+                });
             });
         },
 
@@ -687,7 +760,17 @@ createApp({
             return 'fas fa-file';
         }
     },
-    watch: {
+        watch: {
+        showChartModal(newVal) {
+            if (newVal) {
+                if (!this.selectedChartIndicator && this.uniqueTestItemNames.length > 0) {
+                    this.selectedChartIndicator = this.uniqueTestItemNames[0];
+                }
+                this.$nextTick(() => {
+                    this.renderChart();
+                });
+            }
+        },
         messages: {
             handler() {
                 this.$nextTick(() => {
