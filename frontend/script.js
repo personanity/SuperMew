@@ -361,6 +361,19 @@ createApp({
                                     this.messages[botMsgIdx].ragSteps.push(data.step);
                                 } else if (data.type === 'follow_ups') {
                                     this.messages[botMsgIdx].followUps = data.questions;
+                                } else if (data.type === 'session_title') {
+                                    // 更新侧边栏标题（如果当前历史记录没打开，可在这里动态触发获取，或直接静默更新数组）
+                                    const s = this.sessions.find(s => s.session_id === data.session_id);
+                                    if (s) {
+                                        s.title = data.title;
+                                    } else {
+                                        // 否则在后台重新获取一次历史记录列表以更新视图
+                                        if (this.messages.length <= 2) {
+                                            fetch(`/sessions/${this.userId}`).then(r => r.json()).then(d => {
+                                                this.sessions = d.sessions;
+                                            });
+                                        }
+                                    }
                                 } else if (data.type === 'error') {
                                     this.messages[botMsgIdx].isThinking = false;
                                     this.messages[botMsgIdx].text += `\n[Error: ${data.content}]`;
