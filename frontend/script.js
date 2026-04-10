@@ -540,6 +540,7 @@ createApp({
                                     this.messages[botMsgIdx].text += data.content;
                                 } else if (data.type === 'trace') {
                                     this.messages[botMsgIdx].ragTrace = data.rag_trace;
+                                    this.$nextTick(() => this.mountKnowledgeGraph(botMsgIdx));
                                 } else if (data.type === 'rag_step') {
                                     // 实时 RAG 检索步骤 — 直接显示在思考气泡内
                                     if (!this.messages[botMsgIdx].ragSteps) {
@@ -617,6 +618,58 @@ createApp({
                 this.$refs.chatContainer.scrollTop = this.$refs.chatContainer.scrollHeight;
             }
         },
+
+        /** 根据 rag_trace.graph_subgraph 渲染 vis-network（需全局 vis） */
+        mountKnowledgeGraph(msgIndex) {
+            try {
+                const msg = this.messages[msgIndex];
+                if (!msg || !msg.ragTrace || !msg.ragTrace.graph_subgraph) return;
+                const raw = msg.ragTrace.graph_subgraph;
+                const nodesArr = raw.nodes || [];
+                const edgesArr = raw.edges || [];
+                if (!nodesArr.length) return;
+                if (typeof vis === 'undefined') {
+                    console.warn('vis-network not loaded');
+                    return;
+                }
+                const el = document.getElementById('kg-net-' + msgIndex);
+                if (!el) return;
+                if (el._visNetwork) {
+                    el._visNetwork.destroy();
+                    el._visNetwork = null;
+                }
+                const vNodes = nodesArr.map((n) => ({
+                    id: n.id,
+                    label: n.label,
+                    group: n.group || 'Other',
+                }));
+                const vEdges = edgesArr.map((e, i) => ({
+                    id: 'e' + msgIndex + '_' + i,
+                    from: e.from,
+                    to: e.to,
+                    label: e.label || '',
+                    arrows: 'to',
+                }));
+                const netData = {
+                    nodes: new vis.DataSet(vNodes),
+                    edges: new vis.DataSet(vEdges),
+                };
+                const options = {
+                    nodes: { shape: 'box', margin: 10, font: { size: 12 } },
+                    edges: { font: { size: 10, align: 'middle' } },
+                    physics: { enabled: true, stabilization: { iterations: 80 } },
+                    groups: {
+                        Disease: { color: { background: '#d5e8f7', border: '#2980b9' } },
+                        Drug: { color: { background: '#d5f5e3', border: '#1e8449' } },
+                        Gene: { color: { background: '#ebdef8', border: '#8e44ad' } },
+                        Other: { color: { background: '#ecf0f1', border: '#7f8c8d' } },
+                    },
+                };
+                el._visNetwork = new vis.Network(el, netData, options);
+            } catch (e) {
+                console.warn('mountKnowledgeGraph', e);
+            }
+        },
         
         handleNewChat() {
             this.messages = [];
@@ -669,6 +722,7 @@ createApp({
                 }));
                 
                 this.$nextTick(() => {
+                    this.messages.forEach((_, i) => this.mountKnowledgeGraph(i));
                     this.scrollToBottom();
                 });
             } catch (error) {

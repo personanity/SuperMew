@@ -101,6 +101,10 @@ def search_knowledge_base(query: str) -> str:
     if rag_trace:
         _set_last_rag_context({"rag_trace": rag_trace})
 
+    merged = (rag_result.get("context") or "").strip() if isinstance(rag_result, dict) else ""
+    if merged:
+        return "Retrieved knowledge (vector + knowledge graph):\n" + merged
+
     if not docs:
         return "No relevant documents found in the knowledge base."
 

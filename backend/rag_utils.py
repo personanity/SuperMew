@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import os
 import json
 import requests
@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from milvus_client import MilvusManager
 from embedding import embedding_service as _embedding_service
 from parent_chunk_store import ParentChunkStore
-from graph_retriever import GraphRetriever
 from langchain.chat_models import init_chat_model
 from tools import emit_rag_step
 
@@ -27,9 +26,95 @@ LEAF_RETRIEVE_LEVEL = int(os.getenv("LEAF_RETRIEVE_LEVEL", "3"))
 # 全局初始化检索依赖（与 api 共用 embedding_service，保证 BM25 状态一致）
 _milvus_manager = MilvusManager()
 _parent_chunk_store = ParentChunkStore()
-_graph_retriever = GraphRetriever()
 
+_medical_graph: Any = None  # MedicalGraphRAGRetriever 实例；False 表示曾初始化失败，不再重试
 _stepback_model = None
+
+
+def _get_medical_graph():
+    """懒加载 Neo4j 图谱检索；无密码或失败时返回 None。"""
+    global _medical_graph
+    if _medical_graph is False:
+        return None
+    if _medical_graph is not None:
+        return _medical_graph
+    if not os.getenv("NEO4J_PASSWORD"):
+        _medical_graph = False
+        return None
+    try:
+        from medical_graph_rag_retriever import MedicalGraphRAGRetriever
+
+        _medical_graph = MedicalGraphRAGRetriever()
+        return _medical_graph
+    except Exception as e:
+        print(f"Medical graph init failed: {e}")
+        _medical_graph = False
+        return None
+
+
+def _graph_step_detail(extra: Dict[str, Any]) -> str:
+    """供 emit_rag_step 展示的图谱检索摘要（与前端 rag_trace 一致）。"""
+    ge = extra.get("graph_entities") or {}
+    parts: List[str] = []
+    if isinstance(ge, dict):
+        if ge.get("diseases"):
+            parts.append("疾病:" + ",".join(ge["diseases"][:8]))
+        if ge.get("drugs"):
+            parts.append("药物:" + ",".join(ge["drugs"][:8]))
+        if ge.get("genes"):
+            parts.append("基因:" + ",".join(ge["genes"][:8]))
+    sg = extra.get("graph_subgraph") or {}
+    if isinstance(sg, dict):
+        nn = len(sg.get("nodes") or [])
+        ee = len(sg.get("edges") or [])
+        if nn or ee:
+            parts.append(f"子图 {nn} 节点 / {ee} 边")
+    return " · ".join(parts) if parts else "已查询 Neo4j"
+
+
+def _format_doc_lines_for_merge(docs: List[dict]) -> List[str]:
+    chunks: List[str] = []
+    for i, doc in enumerate(docs, 1):
+        source = doc.get("filename", "Unknown")
+        page = doc.get("page_number", "N/A")
+        text = doc.get("text", "")
+        chunks.append(f"[{i}] {source} (Page {page}):\n{text}")
+    return chunks
+
+
+def _merge_graph_and_vector_context(
+    merged_docs: List[dict],
+    entity_query: str,
+    include_graph: bool = True,
+) -> Tuple[str, Dict[str, Any]]:
+    """图谱上下文（实体驱动）与向量块文本合并，供 LLM 使用。"""
+    from medical_graph_rag_retriever import merge_with_vector_chunks
+
+    graph_text = ""
+    extra: Dict[str, Any] = {
+        "graph_kb_applied": False,
+        "graph_entities": None,
+        "graph_error": None,
+        "graph_subgraph": None,
+        "graph_context_preview": None,
+    }
+    if include_graph:
+        gr = _get_medical_graph()
+        if gr:
+            try:
+                gtext, subgraph, ents, _facts = gr.build_trace_for_ui(
+                    entity_query.strip(), top_k=5
+                )
+                graph_text = (gtext or "").strip()
+                extra["graph_entities"] = ents
+                extra["graph_subgraph"] = subgraph
+                extra["graph_context_preview"] = (gtext or "")[:2000]
+                extra["graph_kb_applied"] = bool(graph_text)
+            except Exception as e:
+                extra["graph_error"] = str(e)
+    vector_chunks = _format_doc_lines_for_merge(merged_docs)
+    merged = merge_with_vector_chunks(graph_text, [t for t in vector_chunks if t.strip()])
+    return merged, extra
 
 
 def _get_rerank_endpoint() -> str:
@@ -287,7 +372,13 @@ def _compute_rrf(*result_lists: List[List[dict]], k: int = 60, top_k: int = 5) -
 
 from tools import get_rag_config
 
-def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
+
+def retrieve_documents(
+    query: str,
+    top_k: int = 5,
+    entity_query: Optional[str] = None,
+    include_graph_merge: bool = True,
+) -> Dict[str, Any]:
     config = get_rag_config()
     think_mode = config.get("think_mode", "normal")
     kb_tier = "detailed" if think_mode == "deep" else "brief"
@@ -345,30 +436,34 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
         except Exception as e:
             print(f"Sparse retrieve error: {e}")
 
-    # 3. 图检索 (Graph)
-    graph_results = []
-    try:
-        graph_results = _graph_retriever.retrieve(query, top_k=candidate_k)
-        if graph_results:
-            emit_rag_step("🕸️", f"知识图谱(Graph)召回", f"匹配到 {len(graph_results)} 条关联关系")
-    except Exception as e:
-        print(f"Graph retrieve error: {e}")
+    # 3. 图谱检索不进入 RRF；在向量结果确定后，按 entity_query 单独拉取 Neo4j 上下文并合并。
+    eq = (entity_query if entity_query is not None else query).strip()
 
-    # 本地 RRF 融合三路结果
-    retrieved = _compute_rrf(dense_results, sparse_results, graph_results, k=60, top_k=candidate_k)
-    emit_rag_step("🔀", "多路 RRF 混合重排", f"三路融合得出 Top {len(retrieved)} 候选")
+    # 本地 RRF：仅 Dense + Sparse 两路
+    retrieved = _compute_rrf(dense_results, sparse_results, k=60, top_k=candidate_k)
+    emit_rag_step("🔀", "多路 RRF 混合重排", f"Dense+Sparse 两路融合 Top {len(retrieved)} 候选")
 
     if not retrieved:
-        # Fallback to failed status if absolutely nothing
+        merged_context, graph_extra = _merge_graph_and_vector_context(
+            [], eq, include_graph=include_graph_merge
+        )
+        if graph_extra.get("graph_kb_applied"):
+            emit_rag_step(
+                "🕸️",
+                "知识图谱(Neo4j)",
+                _graph_step_detail(graph_extra) + " · 向量无命中，仅图谱上下文",
+            )
+        mode = "graph_only" if graph_extra.get("graph_kb_applied") else "failed"
         return {
             "docs": [],
+            "merged_context": merged_context,
             "meta": {
                 "rerank_enabled": bool(RERANK_MODEL and RERANK_API_KEY and RERANK_BINDING_HOST),
                 "rerank_applied": False,
                 "rerank_model": RERANK_MODEL,
                 "rerank_endpoint": _get_rerank_endpoint(),
-                "rerank_error": "all_retrieve_failed",
-                "retrieval_mode": "failed",
+                "rerank_error": "all_retrieve_failed" if mode == "failed" else None,
+                "retrieval_mode": mode,
                 "kb_tier": kb_tier,
                 "candidate_k": candidate_k,
                 "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
@@ -378,6 +473,9 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
                 "auto_merge_replaced_chunks": 0,
                 "auto_merge_steps": 0,
                 "candidate_count": 0,
+                "dense_count": len(dense_results),
+                "sparse_count": len(sparse_results),
+                **graph_extra,
             },
         }
 
@@ -399,36 +497,49 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
             reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=final_top_k)
             
         merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=final_top_k, kb_tier=kb_tier)
-        rerank_meta["retrieval_mode"] = f"hybrid_3way_rrf_{think_mode}"
+        merged_context, graph_extra = _merge_graph_and_vector_context(
+            merged_docs, eq, include_graph=include_graph_merge
+        )
+        if graph_extra.get("graph_kb_applied"):
+            emit_rag_step(
+                "🕸️",
+                "知识图谱(Neo4j)",
+                _graph_step_detail(graph_extra) + " · 已合并向量片段",
+            )
+        rerank_meta["retrieval_mode"] = f"hybrid_2way_rrf_{think_mode}_graph_merge"
         rerank_meta["kb_tier"] = kb_tier
         rerank_meta["candidate_k"] = candidate_k
         rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
         rerank_meta["dense_count"] = len(dense_results)
         rerank_meta["sparse_count"] = len(sparse_results)
-        rerank_meta["graph_count"] = len(graph_results)
         rerank_meta.update(merge_meta)
-        return {"docs": merged_docs, "meta": rerank_meta}
+        rerank_meta.update(graph_extra)
+        return {"docs": merged_docs, "merged_context": merged_context, "meta": rerank_meta}
     except Exception as e:
+        merged_context, graph_extra = _merge_graph_and_vector_context(
+            retrieved[:final_top_k], eq, include_graph=include_graph_merge
+        )
         return {
             "docs": retrieved[:final_top_k],
+            "merged_context": merged_context,
             "meta": {
                 "rerank_enabled": bool(RERANK_MODEL and RERANK_API_KEY and RERANK_BINDING_HOST),
                 "rerank_applied": False,
                 "rerank_model": RERANK_MODEL,
                 "rerank_endpoint": _get_rerank_endpoint(),
                 "rerank_error": f"process_error: {e}",
-                "retrieval_mode": f"hybrid_3way_rrf_{think_mode}",
+                "retrieval_mode": f"hybrid_2way_rrf_{think_mode}_graph_merge",
                 "kb_tier": kb_tier,
                 "candidate_k": candidate_k,
                 "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
                 "dense_count": len(dense_results),
                 "sparse_count": len(sparse_results),
-                "graph_count": len(graph_results),
                 "auto_merge_enabled": AUTO_MERGE_ENABLED,
                 "auto_merge_applied": False,
                 "auto_merge_threshold": AUTO_MERGE_THRESHOLD,
                 "auto_merge_replaced_chunks": 0,
                 "auto_merge_steps": 0,
                 "candidate_count": len(retrieved),
+                **graph_extra,
             },
         }

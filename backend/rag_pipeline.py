@@ -103,10 +103,11 @@ def _format_docs(docs: List[dict]) -> str:
 def retrieve_initial(state: RAGState) -> RAGState:
     query = state["question"]
     emit_rag_step("🔍", "正在检索知识库...", f"查询: {query[:50]}")
-    retrieved = retrieve_documents(query, top_k=15)
+    retrieved = retrieve_documents(query, top_k=15, entity_query=state["question"])
     results = retrieved.get("docs", [])
     retrieve_meta = retrieved.get("meta", {})
-    context = _format_docs(results)
+    merged = (retrieved.get("merged_context") or "").strip()
+    context = merged if merged else _format_docs(results)
     emit_rag_step(
         "🧱",
         "三级分块检索",
@@ -144,7 +145,11 @@ def retrieve_initial(state: RAGState) -> RAGState:
         "leaf_retrieve_level": retrieve_meta.get("leaf_retrieve_level"),
         "dense_count": retrieve_meta.get("dense_count"),
         "sparse_count": retrieve_meta.get("sparse_count"),
-        "graph_count": retrieve_meta.get("graph_count"),
+        "graph_kb_applied": retrieve_meta.get("graph_kb_applied"),
+        "graph_entities": retrieve_meta.get("graph_entities"),
+        "graph_error": retrieve_meta.get("graph_error"),
+        "graph_subgraph": retrieve_meta.get("graph_subgraph"),
+        "graph_context_preview": retrieve_meta.get("graph_context_preview"),
         "auto_merge_enabled": retrieve_meta.get("auto_merge_enabled"),
         "auto_merge_applied": retrieve_meta.get("auto_merge_applied"),
         "auto_merge_threshold": retrieve_meta.get("auto_merge_threshold"),
@@ -267,13 +272,23 @@ def retrieve_expanded(state: RAGState) -> RAGState:
     auto_merge_steps = 0
     dense_count_any = 0
     sparse_count_any = 0
-    graph_count_any = 0
+    graph_kb_any = False
+    hyde_merged_str = ""
+    step_merged_str = ""
+    hyde_meta: dict = {}
+    step_meta: dict = {}
 
     if strategy in ("hyde", "complex"):
         hypothetical_doc = state.get("hypothetical_doc") or generate_hypothetical_document(state["question"])
-        retrieved_hyde = retrieve_documents(hypothetical_doc, top_k=15)
+        graph_on_hyde = strategy == "hyde"
+        retrieved_hyde = retrieve_documents(
+            hypothetical_doc,
+            top_k=15,
+            entity_query=state["question"],
+            include_graph_merge=graph_on_hyde,
+        )
         results.extend(retrieved_hyde.get("docs", []))
-        hyde_meta = retrieved_hyde.get("meta", {})
+        hyde_meta = retrieved_hyde.get("meta", {}) or {}
         emit_rag_step(
             "🧱",
             "HyDE 三级检索",
@@ -300,13 +315,19 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         auto_merge_steps += int(hyde_meta.get("auto_merge_steps") or 0)
         dense_count_any += int(hyde_meta.get("dense_count") or 0)
         sparse_count_any += int(hyde_meta.get("sparse_count") or 0)
-        graph_count_any += int(hyde_meta.get("graph_count") or 0)
+        graph_kb_any = graph_kb_any or bool(hyde_meta.get("graph_kb_applied"))
+        hyde_merged_str = (retrieved_hyde.get("merged_context") or "").strip()
 
     if strategy in ("step_back", "complex"):
         expanded_query = state.get("expanded_query") or state["question"]
-        retrieved_stepback = retrieve_documents(expanded_query, top_k=15)
+        retrieved_stepback = retrieve_documents(
+            expanded_query,
+            top_k=15,
+            entity_query=state["question"],
+            include_graph_merge=True,
+        )
         results.extend(retrieved_stepback.get("docs", []))
-        step_meta = retrieved_stepback.get("meta", {})
+        step_meta = retrieved_stepback.get("meta", {}) or {}
         emit_rag_step(
             "🧱",
             "Step-back 三级检索",
@@ -333,7 +354,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         auto_merge_steps += int(step_meta.get("auto_merge_steps") or 0)
         dense_count_any += int(step_meta.get("dense_count") or 0)
         sparse_count_any += int(step_meta.get("sparse_count") or 0)
-        graph_count_any += int(step_meta.get("graph_count") or 0)
+        graph_kb_any = graph_kb_any or bool(step_meta.get("graph_kb_applied"))
+        step_merged_str = (retrieved_stepback.get("merged_context") or "").strip()
 
     deduped = []
     seen = set()
@@ -349,9 +371,22 @@ def retrieve_expanded(state: RAGState) -> RAGState:
     for idx, item in enumerate(deduped, 1):
         item["rrf_rank"] = idx
 
-    context = _format_docs(deduped)
+    # HyDE 与 Step-back 各自已生成 merged_context；complex 时 HyDE 不含图谱，图谱仅在 Step-back 段附加一次。
+    _parts = [p for p in (hyde_merged_str, step_merged_str) if p]
+    context = "\n\n========\n\n".join(_parts) if _parts else _format_docs(deduped)
     emit_rag_step("✅", f"扩展检索完成，共 {len(deduped)} 个片段")
     emit_rag_step("🧠", "开始汇总扩充知识，准备生成回答...")
+    graph_fields: dict = {}
+    _gk = ("graph_entities", "graph_subgraph", "graph_context_preview", "graph_error")
+    if strategy in ("step_back", "complex") and step_meta:
+        for k in _gk:
+            if step_meta.get(k) is not None:
+                graph_fields[k] = step_meta[k]
+    elif strategy == "hyde" and hyde_meta:
+        for k in _gk:
+            if hyde_meta.get(k) is not None:
+                graph_fields[k] = hyde_meta[k]
+
     rag_trace = state.get("rag_trace", {}) or {}
     rag_trace.update({
         "expanded_query": state.get("expanded_query") or state["question"],
@@ -373,7 +408,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         "leaf_retrieve_level": leaf_retrieve_level,
         "dense_count": dense_count_any,
         "sparse_count": sparse_count_any,
-        "graph_count": graph_count_any,
+        "graph_kb_applied": graph_kb_any,
+        **graph_fields,
         "auto_merge_enabled": auto_merge_enabled,
         "auto_merge_applied": auto_merge_applied,
         "auto_merge_threshold": auto_merge_threshold,

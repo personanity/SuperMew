@@ -45,6 +45,11 @@ class RagTrace(BaseModel):
     dense_count: Optional[int] = None
     sparse_count: Optional[int] = None
     graph_count: Optional[int] = None
+    graph_kb_applied: Optional[bool] = None
+    graph_entities: Optional[Dict[str, Any]] = None
+    graph_error: Optional[str] = None
+    graph_subgraph: Optional[Dict[str, Any]] = None
+    graph_context_preview: Optional[str] = None
     auto_merge_enabled: Optional[bool] = None
     auto_merge_applied: Optional[bool] = None
     auto_merge_threshold: Optional[int] = None

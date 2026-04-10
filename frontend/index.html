@@ -12,6 +12,7 @@
     <script src="vendor/js/highlight.min.js"></script>
     <script src="vendor/js/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
     <div id="app" class="app-wrapper">
@@ -621,6 +622,36 @@
                             </details>
                         </div>
                     </div>
+
+                        <!-- 知识图谱检索：实体 + 子图可视化 + 文本预览 -->
+                        <div v-if="!msg.isUser && msg.ragTrace && (msg.ragTrace.graph_kb_applied || msg.ragTrace.graph_entities || msg.ragTrace.graph_subgraph)" class="kg-rag-section">
+                            <details class="kg-rag-details" open>
+                                <summary class="kg-rag-title"><i class="fas fa-project-diagram"></i> 知识图谱检索</summary>
+                                <div class="kg-rag-body">
+                                    <div v-if="msg.ragTrace.graph_entities" class="kg-entity-tags">
+                                        <span v-if="msg.ragTrace.graph_entities.diseases && msg.ragTrace.graph_entities.diseases.length" class="kg-tag kg-tag-disease">
+                                            疾病：{{ msg.ragTrace.graph_entities.diseases.join('、') }}
+                                        </span>
+                                        <span v-if="msg.ragTrace.graph_entities.drugs && msg.ragTrace.graph_entities.drugs.length" class="kg-tag kg-tag-drug">
+                                            药物：{{ msg.ragTrace.graph_entities.drugs.join('、') }}
+                                        </span>
+                                        <span v-if="msg.ragTrace.graph_entities.genes && msg.ragTrace.graph_entities.genes.length" class="kg-tag kg-tag-gene">
+                                            基因：{{ msg.ragTrace.graph_entities.genes.join('、') }}
+                                        </span>
+                                    </div>
+                                    <div v-if="msg.ragTrace.graph_error" class="kg-error">Neo4j：{{ msg.ragTrace.graph_error }}</div>
+                                    <div
+                                        v-if="msg.ragTrace.graph_subgraph && msg.ragTrace.graph_subgraph.nodes && msg.ragTrace.graph_subgraph.nodes.length"
+                                        class="kg-network-canvas"
+                                        :id="'kg-net-' + index"
+                                    ></div>
+                                    <details v-if="msg.ragTrace.graph_context_preview" class="kg-preview-details">
+                                        <summary>图谱上下文预览（写入 LLM 的前段）</summary>
+                                        <pre class="kg-preview-pre">{{ msg.ragTrace.graph_context_preview }}</pre>
+                                    </details>
+                                </div>
+                            </details>
+                        </div>
 
                     <div v-if="!msg.isUser && msg.ragTrace" class="message-meta">
                         <details class="reasoning-details">
