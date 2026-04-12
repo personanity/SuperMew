@@ -2,6 +2,7 @@ const { createApp } = Vue;
 
 createApp({
     data() {
+        const _savedLoc = typeof localStorage !== 'undefined' ? localStorage.getItem('ui_locale') : null;
         return {
             messages: [],
             userInput: '',
@@ -14,6 +15,7 @@ createApp({
             sessions: [],
             showHistorySidebar: false,
             isComposing: false,
+            locale: _savedLoc === 'en' ? 'en' : 'zh',
             // 文档管理相关
             documents: [],
             documentsLoading: false,
@@ -21,11 +23,6 @@ createApp({
             isUploading: false,
             uploadProgress: '',
             kbTier: 'brief',
-            thinkModeHints: {
-                fast: '快速：简要知识库；约10条候选/10条入模，跳过重排序。',
-                normal: '正常：简要知识库；约15条候选/10条入模，启用重排序。',
-                deep: '深度：详细知识库；约30条候选/15条入模，启用重排序。',
-            },
             showTooltip: false,
             tooltipText: '',
             tooltipX: 0,
@@ -79,6 +76,27 @@ createApp({
         };
     },
     computed: {
+        thinkModeHints() {
+            return {
+                fast: this.t('think_hover_fast'),
+                normal: this.t('think_hover_normal'),
+                deep: this.t('think_hover_deep'),
+            };
+        },
+        /** 日历星期标题：随语言切换 */
+        calendarWeekdays() {
+            const raw = this.t('cal_weekdays');
+            return raw.split(/[,，]/).map((s) => s.trim());
+        },
+        /** 复诊日历月份标题 */
+        followUpMonthLabel() {
+            const y = this.followUpCalendarYear;
+            const m = this.followUpCalendarMonth;
+            if (this.locale === 'en') {
+                return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+            }
+            return `${y} 年 ${m} 月`;
+        },
         /** 医嘱项目下拉：去重 */
         orderCategoryOptions() {
             const recs = this.userProfile?.records;
@@ -86,7 +104,7 @@ createApp({
             return [...new Set(recs.map((r) => (r.order_category || '').trim()).filter(Boolean))].sort();
         },
         kbTierLabel() {
-            return this.kbTier === 'detailed' ? '详细知识库' : '简要知识库';
+            return this.t(this.kbTier === 'detailed' ? 'kb_tier_detailed' : 'kb_tier_brief');
         },
         /** 当前医嘱项目下的报告日期 */
         reportDateOptionsForFilter() {
@@ -128,7 +146,7 @@ createApp({
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(vd)) continue;
                     if (!map[vd]) map[vd] = [];
                     map[vd].push({
-                        title: (it.item_title || '复诊').trim() || '复诊提醒',
+                        title: (it.item_title || '').trim() || this.t('follow_up_default'),
                         detail: (it.detail || '').trim(),
                         source: src,
                     });
@@ -157,8 +175,12 @@ createApp({
             if (!this.followUpBubbleDateKey) return '';
             const parts = this.followUpBubbleDateKey.split('-');
             if (parts.length !== 3) return this.followUpBubbleDateKey;
-            const [y, m, d] = parts;
-            return `${y} 年 ${Number(m)} 月 ${Number(d)} 日`;
+            const [y, m, d] = parts.map((x) => Number(x));
+            if (this.locale === 'en') {
+                const dt = new Date(y, m - 1, d);
+                return dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            }
+            return `${y} 年 ${m} 月 ${d} 日`;
         },
         followUpBubbleBoxStyle() {
             if (!this.followUpBubbleVisible) return {};
@@ -169,6 +191,7 @@ createApp({
         },
     },
     mounted() {
+        this._syncDocumentLang();
         this.configureMarked();
         // 尝试从 localStorage 恢复用户ID
         const savedUserId = localStorage.getItem('userId');
@@ -236,6 +259,31 @@ createApp({
         }
     },
     methods: {
+        t(key, vars) {
+            if (typeof AppI18n === 'undefined') return key;
+            return AppI18n.t(this.locale, key, vars);
+        },
+        setLocale(loc) {
+            this.locale = loc === 'en' ? 'en' : 'zh';
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('ui_locale', this.locale);
+            }
+            this._syncDocumentLang();
+            if (this.showChartModal) {
+                this.$nextTick(() => this.renderChart());
+            }
+        },
+        _syncDocumentLang() {
+            document.documentElement.lang = this.locale === 'en' ? 'en' : 'zh-CN';
+            document.title = this.t('page_title');
+        },
+        formatSessionTime(iso) {
+            try {
+                return new Date(iso).toLocaleString(this.locale === 'en' ? 'en-US' : 'zh-CN');
+            } catch (_) {
+                return iso;
+            }
+        },
         configureMarked() {
             marked.setOptions({
                 highlight: function(code, lang) {
@@ -316,7 +364,7 @@ createApp({
                 }
             } catch (err) {
                 console.error('Failed to copy text: ', err);
-                alert("复制失败，您的浏览器不支持该功能。");
+                alert(this.t('err_copy'));
             }
         },
 
@@ -353,7 +401,7 @@ createApp({
         async runNciDictionarySearch() {
             const q = (this.nciDictionaryQuery || '').trim();
             if (!q) {
-                this.nciDictionaryError = '请输入要查询的术语。';
+                this.nciDictionaryError = this.t('dict_enter_term');
                 return;
             }
             this.nciDictionaryLoading = true;
@@ -374,7 +422,7 @@ createApp({
                 console.error('NCI dictionary search failed', e);
                 this.nciDictionaryResults = [];
                 this.nciDictionaryTotal = 0;
-                this.nciDictionaryError = '查询失败，请检查网络或稍后重试。（术语以英文为主）';
+                this.nciDictionaryError = this.t('dict_query_fail');
             } finally {
                 this.nciDictionaryLoading = false;
             }
@@ -395,10 +443,10 @@ createApp({
                     if (data.questions && data.questions.length > 0) {
                         this.optimizedQuestions = data.questions;
                     } else {
-                        alert('未能生成优化提问，请尝试修改输入。');
+                        alert(this.t('err_opt_empty'));
                     }
                 } else {
-                    alert('优化提问请求失败，请稍后再试。');
+                    alert(this.t('err_opt_fail'));
                 }
             } catch (e) {
                 console.error(e);
@@ -582,14 +630,14 @@ createApp({
                     // 用户主动终止
                     this.messages[botMsgIdx].isThinking = false;
                     if (!this.messages[botMsgIdx].text) {
-                        this.messages[botMsgIdx].text = '(已终止回答)';
+                        this.messages[botMsgIdx].text = this.t('stream_stopped');
                     } else {
-                        this.messages[botMsgIdx].text += '\n\n_(回答已被终止)_';
+                        this.messages[botMsgIdx].text += '\n\n' + this.t('stream_stopped_note');
                     }
                 } else {
                     console.error('Error:', error);
                     this.messages[botMsgIdx].isThinking = false;
-                    this.messages[botMsgIdx].text = `喵呜... 出了点问题：${error.message}`;
+                    this.messages[botMsgIdx].text = this.t('stream_error_prefix') + error.message;
                 }
             } finally {
                 this.isLoading = false;
@@ -679,7 +727,7 @@ createApp({
         },
         
         handleClearChat() {
-            if (confirm('确定要清空当前对话吗？喵？')) {
+            if (confirm(this.t('confirm_clear'))) {
                 this.messages = [];
             }
         },
@@ -696,7 +744,7 @@ createApp({
                 this.sessions = data.sessions;
             } catch (error) {
                 console.error('Error loading sessions:', error);
-                alert('加载历史记录失败：' + error.message);
+                alert(this.t('err_load_sessions') + error.message);
             }
         },
         
@@ -727,13 +775,13 @@ createApp({
                 });
             } catch (error) {
                 console.error('Error loading session:', error);
-                alert('加载会话失败：' + error.message);
+                alert(this.t('err_load_session') + error.message);
                 this.messages = [];
             }
         },
 
         async deleteSession(sessionId) {
-            if (!confirm(`确定要删除会话 "${sessionId}" 吗？`)) {
+            if (!confirm(this.t('confirm_delete_session', { id: sessionId }))) {
                 return;
             }
 
@@ -760,7 +808,7 @@ createApp({
                 }
             } catch (error) {
                 console.error('Error deleting session:', error);
-                alert('删除会话失败：' + error.message);
+                alert(this.t('err_delete_session') + error.message);
             }
         },
         
@@ -833,15 +881,11 @@ createApp({
                     );
                 }
                 if (!rec || !String(rec.id || '').trim()) {
-                    alert('无法定位要删除的病历（可能缺少记录 id）。请刷新页面后再试。');
+                    alert(this.t('err_locate_record'));
                     return;
                 }
                 const label = `${rec.order_category || '病历'} · ${rec.report_date || ''}`.trim();
-                if (
-                    !confirm(
-                        `确定删除本条病历「${label || rec.id}」？\n该条的简要记忆将从病历夹与对话记忆中移除，且不可恢复。`
-                    )
-                ) {
+                if (!confirm(this.t('confirm_delete_record', { label: label || rec.id }))) {
                     return;
                 }
                 const response = await fetch(
@@ -862,7 +906,7 @@ createApp({
                 this.$nextTick(() => this.initProfileFilters());
             } catch (e) {
                 console.error('deleteActiveMedicalRecord', e);
-                alert('删除失败：' + e.message);
+                alert(this.t('err_delete_record') + e.message);
             } finally {
                 this.isDeletingMedicalRecord = false;
             }
@@ -959,11 +1003,11 @@ createApp({
         },
         async uploadDischargeReport() {
             if (!this.selectedDischargeFile) {
-                alert('请选择出院报告 PDF 或图片');
+                alert(this.t('pick_discharge_first'));
                 return;
             }
             this.isUploadingDischarge = true;
-            this.dischargeProgress = '正在解析出院报告与出院医嘱，请稍候…';
+            this.dischargeProgress = this.t('discharge_parsing');
             try {
                 const formData = new FormData();
                 formData.append('file', this.selectedDischargeFile);
@@ -982,18 +1026,14 @@ createApp({
                 if (this.$refs.dischargeInput) this.$refs.dischargeInput.value = '';
             } catch (e) {
                 console.error(e);
-                this.dischargeProgress = '失败：' + e.message;
+                this.dischargeProgress = this.t('fail_prefix') + e.message;
             } finally {
                 this.isUploadingDischarge = false;
             }
         },
         async deleteDischargeReport(rep) {
             if (!rep || !rep.id) return;
-            if (
-                !confirm(
-                    `确定删除出院报告「${rep.source_filename || rep.id}」？随访日历中的相关日期将一并移除。`
-                )
-            ) {
+            if (!confirm(this.t('confirm_delete_discharge', { name: rep.source_filename || rep.id }))) {
                 return;
             }
             this.isDeletingDischargeReport = true;
@@ -1010,7 +1050,7 @@ createApp({
                 this.userProfile = data.profile;
                 this.dischargeProgress = data.message || '已删除';
             } catch (e) {
-                alert('删除失败：' + e.message);
+                alert(this.t('err_delete_discharge') + e.message);
             } finally {
                 this.isDeletingDischargeReport = false;
             }
@@ -1102,7 +1142,7 @@ createApp({
                 this.$nextTick(() => this.initProfileFilters());
             } catch (error) {
                 console.error('saveProfileReview', error);
-                alert('保存失败：' + error.message);
+                alert(this.t('err_save_review') + error.message);
             } finally {
                 this.isSavingProfileReview = false;
             }
@@ -1124,12 +1164,12 @@ createApp({
 
         async uploadProfile() {
             if (!this.selectedProfileFile) {
-                alert('请先选择病历文件');
+                alert(this.t('pick_medical_first'));
                 return;
             }
             
             this.isUploadingProfile = true;
-            this.profileProgress = '正在使用多模态大模型解析病历资料，请稍候...';
+            this.profileProgress = this.t('profile_parsing');
             
             try {
                 const formData = new FormData();
@@ -1167,7 +1207,7 @@ createApp({
                 
             } catch (error) {
                 console.error('Error uploading profile:', error);
-                this.profileProgress = '解析失败：' + error.message;
+                this.profileProgress = this.t('parse_failed_prefix') + error.message;
             } finally {
                 this.isUploadingProfile = false;
             }
@@ -1241,7 +1281,7 @@ createApp({
                 (a, b) => new Date(a._labelDate || 0) - new Date(b._labelDate || 0)
             );
 
-            const labels = dataPoints.map((item) => item._labelDate || '未知时间');
+            const labels = dataPoints.map((item) => item._labelDate || this.t('unknown_time'));
             const values = dataPoints.map((item) => {
                 const raw = String(item.result || '')
                     .replace(/[<>≤≥]/g, '')
@@ -1256,7 +1296,7 @@ createApp({
                 refMax && refMin && refMax.length === labels.length
                     ? [
                           {
-                              label: '参考上限',
+                              label: this.t('ref_high'),
                               data: refMax,
                               borderColor: 'transparent',
                               backgroundColor: 'transparent',
@@ -1268,7 +1308,7 @@ createApp({
                               order: 1,
                           },
                           {
-                              label: '参考下限',
+                              label: this.t('ref_low'),
                               data: refMin,
                               borderColor: 'transparent',
                               backgroundColor: 'rgba(185, 236, 185, 0.55)',
@@ -1289,6 +1329,8 @@ createApp({
                 if (this.chartInstance) {
                     this.chartInstance.destroy();
                 }
+
+                const vm = this;
 
                 const mainDataset = {
                     label: this.selectedChartIndicator,
@@ -1334,7 +1376,7 @@ createApp({
                                 displayColors: true,
                                 filter: (item) => {
                                     const lab = item.dataset.label || '';
-                                    return lab !== '参考上限' && lab !== '参考下限';
+                                    return lab !== vm.t('ref_high') && lab !== vm.t('ref_low');
                                 },
                                 callbacks: {
                                     afterBody: (items) => {
@@ -1344,7 +1386,7 @@ createApp({
                                         if (!row) return '';
                                         const ref = (row.reference_range || '').trim();
                                         if (!ref) return '';
-                                        return `参考区间：${ref}`;
+                                        return vm.t('tooltip_ref_range') + ref;
                                     },
                                 },
                             },
@@ -1388,7 +1430,7 @@ createApp({
                 this.documents = data.documents;
             } catch (error) {
                 console.error('Error loading documents:', error);
-                alert('加载文档列表失败：' + error.message);
+                alert(this.t('err_load_docs') + error.message);
             } finally {
                 this.documentsLoading = false;
             }
@@ -1404,12 +1446,12 @@ createApp({
         
         async uploadDocument() {
             if (!this.selectedFile) {
-                alert('请先选择文件');
+                alert(this.t('pick_file_first'));
                 return;
             }
             
             this.isUploading = true;
-            this.uploadProgress = '正在上传...';
+            this.uploadProgress = this.t('upload_ing');
             
             try {
                 const formData = new FormData();
@@ -1445,14 +1487,14 @@ createApp({
                 
             } catch (error) {
                 console.error('Error uploading document:', error);
-                this.uploadProgress = '上传失败：' + error.message;
+                this.uploadProgress = this.t('upload_failed') + error.message;
             } finally {
                 this.isUploading = false;
             }
         },
         
         async deleteDocument(filename, kbTier = this.kbTier) {
-            if (!confirm(`确定要删除文档 "${filename}" 吗？这将同时删除 Milvus 中的所有相关向量。`)) {
+            if (!confirm(this.t('confirm_delete_doc', { name: filename }))) {
                 return;
             }
             
@@ -1474,7 +1516,7 @@ createApp({
                 
             } catch (error) {
                 console.error('Error deleting document:', error);
-                alert('删除文档失败：' + error.message);
+                alert(this.t('err_delete_doc') + error.message);
             }
         },
         

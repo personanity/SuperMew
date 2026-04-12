@@ -37,6 +37,15 @@ body {
     overflow: hidden;
 }
 
+/* 语言切换：固定在整个 H5/浏览器视口右上角（不随中间卡片滚动） */
+.app-lang-corner {
+    position: fixed;
+    top: max(12px, env(safe-area-inset-top, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    z-index: 10000;
+    pointer-events: auto;
+}
+
 .app-wrapper {
     width: 95vw;
     height: 90vh;
@@ -47,6 +56,29 @@ body {
     display: flex;
     overflow: hidden;
     border: 4px solid var(--white);
+    position: relative;
+}
+
+.lang-select {
+    appearance: auto;
+    font-family: inherit;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-color);
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 12px;
+    padding: 8px 28px 8px 12px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transition: var(--transition);
+    min-width: 7.5rem;
+}
+
+.lang-select:hover,
+.lang-select:focus {
+    border-color: rgba(255, 158, 153, 0.45);
+    outline: none;
 }
 
 /* Sidebar */
@@ -158,6 +190,7 @@ body {
     flex-direction: column;
     background-color: var(--white);
     position: relative;
+    min-height: 0;
 }
 
 .chat-header {
@@ -1888,7 +1921,8 @@ span.cite-ref:hover {
 /* Settings Panel */
 .settings-panel {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     padding: 30px;
     overflow-y: auto;
     background-color: var(--bg-color);
@@ -2189,7 +2223,8 @@ span.cite-ref:hover {
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
 }
 
 /* Thinking Animation (inside bot bubble) */
