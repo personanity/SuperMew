@@ -48,7 +48,7 @@ EXCEL_PATH: Path = (
     / "abstract and mini golden paper_quick"
     / "EN_Pummed Abstract_NPC Nurse_final.xlsx"
 )
-KB_TIER: str = "detailed"
+KB_TIER: str = "brief"
 
 # Milvus `text` 字段：DataType.VARCHAR, max_length=2400（见 milvus_client.init_collection）。
 # 该上限按 UTF-8 字节计，不是 Python len(str) 的字符个数；中文等宽字符易触发「已按 2000 字符截断仍超限制」。

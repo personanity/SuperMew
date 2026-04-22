@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
 from rag_utils import retrieve_documents, step_back_expand, generate_hypothetical_document
-from tools import emit_rag_step
+from tools import emit_rag_step, get_rag_config
 
 load_dotenv()
 
@@ -165,6 +165,24 @@ def retrieve_initial(state: RAGState) -> RAGState:
 
 
 def grade_documents_node(state: RAGState) -> RAGState:
+    cfg = get_rag_config()
+    if cfg.get("skip_grade_and_rewrite"):
+        emit_rag_step(
+            "⏭️",
+            "跳过文档打分与查询重写",
+            "按评测配置直接使用初次检索结果生成答案",
+        )
+        rag_trace = dict(state.get("rag_trace") or {})
+        rag_trace.update(
+            {
+                "grade_score": "skipped",
+                "grade_route": "generate_answer",
+                "rewrite_needed": False,
+                "skip_grade_and_rewrite": True,
+            }
+        )
+        return {"route": "generate_answer", "rag_trace": rag_trace}
+
     grader = _get_grader_model()
     emit_rag_step("📊", "正在评估文档相关性...")
     if not grader:

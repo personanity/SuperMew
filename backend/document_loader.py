@@ -3,6 +3,7 @@ import os
 from typing import Dict, List
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredExcelLoader
+from langchain_core.documents import Document
 
 
 class DocumentLoader:
@@ -144,6 +145,15 @@ class DocumentLoader:
                 return self._load_from_langchain_docs(raw_docs, file_path, filename, doc_type)
             except Exception as e:
                 raise Exception(f"处理文档失败: {str(e)}")
+        elif file_lower.endswith(".md"):
+            doc_type = "Markdown"
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except OSError as e:
+                raise Exception(f"处理文档失败: {str(e)}")
+            raw_docs = [Document(page_content=text, metadata={"source": file_path, "page": 0})]
+            return self._load_from_langchain_docs(raw_docs, file_path, filename, doc_type)
         else:
             raise ValueError(f"不支持的文件类型: {filename}")
 
@@ -202,6 +212,7 @@ class DocumentLoader:
                 or file_lower.endswith((".docx", ".doc"))
                 or file_lower.endswith((".xlsx", ".xls"))
                 or file_lower.endswith((".html", ".htm"))
+                or file_lower.endswith(".md")
             ):
                 continue
 
