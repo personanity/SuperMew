@@ -51,31 +51,36 @@ def _merge_to_parent_level(docs: List[dict], threshold: int = 2) -> Tuple[List[d
     parent_map = {item.get("chunk_id", ""): item for item in parent_docs if item.get("chunk_id")}
 
     merged_docs: List[dict] = []
+    parent_slot: Dict[str, int] = {}
     merged_count = 0
     for doc in docs:
         parent_id = (doc.get("parent_chunk_id") or "").strip()
         if not parent_id or parent_id not in parent_map:
             merged_docs.append(doc)
             continue
-        parent_doc = dict(parent_map[parent_id])
+
         score = doc.get("score")
+        if parent_id in parent_slot:
+            existing = merged_docs[parent_slot[parent_id]]
+            if score is not None:
+                existing_score = existing.get("score")
+                if existing_score is None:
+                    existing["score"] = float(score)
+                else:
+                    existing["score"] = max(float(existing_score), float(score))
+            merged_count += 1
+            continue
+
+        parent_doc = dict(parent_map[parent_id])
         if score is not None:
             parent_doc["score"] = max(float(parent_doc.get("score", score)), float(score))
         parent_doc["merged_from_children"] = True
         parent_doc["merged_child_count"] = len(groups[parent_id])
+        parent_slot[parent_id] = len(merged_docs)
         merged_docs.append(parent_doc)
         merged_count += 1
 
-    deduped: List[dict] = []
-    seen = set()
-    for item in merged_docs:
-        key = item.get("chunk_id") or (item.get("filename"), item.get("page_number"), item.get("text"))
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-
-    return deduped, merged_count
+    return merged_docs, merged_count
 
 
 def _auto_merge_documents(docs: List[dict], top_k: int) -> Tuple[List[dict], Dict[str, Any]]:
