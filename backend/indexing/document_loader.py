@@ -1,39 +1,39 @@
 """文档加载和分片服务"""
 import os
 from typing import Dict, List
+
+from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, UnstructuredExcelLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredExcelLoader
 
 
 class DocumentLoader:
     """文档加载和分片服务"""
 
-    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
-        # 保留原有参数以兼容外部调用；默认启用三层滑动窗口分块。
-        level_1_size = max(1200, chunk_size * 2)
-        level_1_overlap = max(240, chunk_overlap * 2)
-        level_2_size = max(600, chunk_size)
-        level_2_overlap = max(120, chunk_overlap)
-        level_3_size = max(300, chunk_size // 2)
-        level_3_overlap = max(60, chunk_overlap // 2)
+    def __init__(self, chunk_size: int = 800, chunk_overlap: int = 100):
+        level_1_size = max(2000, chunk_size * 3)
+        level_1_overlap = max(400, chunk_overlap * 3)
+        level_2_size = max(1000, chunk_size * 2)
+        level_2_overlap = max(200, chunk_overlap * 2)
+        level_3_size = max(600, chunk_size)
+        level_3_overlap = max(100, chunk_overlap)
 
         self._splitter_level_1 = RecursiveCharacterTextSplitter(
             chunk_size=level_1_size,
             chunk_overlap=level_1_overlap,
             add_start_index=True,
-            separators=["\n\n", "\n", "。", "！", "？", "，", "、", " ", ""],
+            separators=["\n\n", "。", "！", "？", "\n", "，", "、", " ", ""],
         )
         self._splitter_level_2 = RecursiveCharacterTextSplitter(
             chunk_size=level_2_size,
             chunk_overlap=level_2_overlap,
             add_start_index=True,
-            separators=["\n\n", "\n", "。", "！", "？", "，", "、", " ", ""],
+            separators=["\n\n", "。", "！", "？", "\n", "，", "、", " ", ""],
         )
         self._splitter_level_3 = RecursiveCharacterTextSplitter(
             chunk_size=level_3_size,
             chunk_overlap=level_3_overlap,
             add_start_index=True,
-            separators=["\n\n", "\n", "。", "！", "？", "，", "、", " ", ""],
+            separators=["\n\n", "。", "！", "？", "\n", "，", "、", " ", ""],
         )
 
     @staticmethod
@@ -117,13 +117,40 @@ class DocumentLoader:
 
         return root_chunks
 
+    def _load_from_langchain_docs(
+        self,
+        raw_docs: list,
+        file_path: str,
+        filename: str,
+        doc_type: str,
+    ) -> list[dict]:
+        documents: list[dict] = []
+        page_global_chunk_idx = 0
+        for doc in raw_docs:
+            meta = getattr(doc, "metadata", None) or {}
+            page_num = meta.get("page", 0)
+            if page_num is None:
+                page_num = 0
+            try:
+                page_num = int(page_num)
+            except (TypeError, ValueError):
+                page_num = 0
+            base_doc = {
+                "filename": filename,
+                "file_path": file_path,
+                "file_type": doc_type,
+                "page_number": page_num,
+            }
+            page_chunks = self._split_page_to_three_levels(
+                text=(doc.page_content or "").strip(),
+                base_doc=base_doc,
+                page_global_chunk_idx=page_global_chunk_idx,
+            )
+            page_global_chunk_idx += len(page_chunks)
+            documents.extend(page_chunks)
+        return documents
+
     def load_document(self, file_path: str, filename: str) -> list[dict]:
-        """
-        加载单个文档并分片
-        :param file_path: 文件路径
-        :param filename: 文件名
-        :return: 分片后的文档列表
-        """
         file_lower = filename.lower()
 
         if file_lower.endswith(".pdf"):
@@ -135,42 +162,32 @@ class DocumentLoader:
         elif file_lower.endswith((".xlsx", ".xls")):
             doc_type = "Excel"
             loader = UnstructuredExcelLoader(file_path)
+        elif file_lower.endswith((".html", ".htm")):
+            doc_type = "HTML"
+            from backend.indexing.html_processor import load_html_for_document_loader
+
+            raw_docs = load_html_for_document_loader(file_path, filename)
+            return self._load_from_langchain_docs(raw_docs, file_path, filename, doc_type)
         else:
             raise ValueError(f"不支持的文件类型: {filename}")
 
         try:
             raw_docs = loader.load()
-            documents = []
-            page_global_chunk_idx = 0
-            for doc in raw_docs:
-                base_doc = {
-                    "filename": filename,
-                    "file_path": file_path,
-                    "file_type": doc_type,
-                    "page_number": doc.metadata.get("page", 0),
-                }
-                page_chunks = self._split_page_to_three_levels(
-                    text=(doc.page_content or "").strip(),
-                    base_doc=base_doc,
-                    page_global_chunk_idx=page_global_chunk_idx,
-                )
-                page_global_chunk_idx += len(page_chunks)
-                documents.extend(page_chunks)
-            return documents
+            return self._load_from_langchain_docs(raw_docs, file_path, filename, doc_type)
         except Exception as e:
-            raise Exception(f"处理文档失败: {str(e)}")
+            raise Exception(f"处理文档失败: {str(e)}") from e
 
     def load_documents_from_folder(self, folder_path: str) -> list[dict]:
-        """
-        从文件夹加载所有文档并分片
-        :param folder_path: 文件夹路径
-        :return: 所有分片后的文档列表
-        """
         all_documents = []
 
         for filename in os.listdir(folder_path):
             file_lower = filename.lower()
-            if not (file_lower.endswith(".pdf") or file_lower.endswith((".docx", ".doc")) or file_lower.endswith((".xlsx", ".xls"))):
+            if not (
+                file_lower.endswith(".pdf")
+                or file_lower.endswith((".docx", ".doc"))
+                or file_lower.endswith((".xlsx", ".xls"))
+                or file_lower.endswith((".html", ".htm"))
+            ):
                 continue
 
             file_path = os.path.join(folder_path, filename)

@@ -737,6 +737,111 @@ textarea {
     white-space: nowrap;
 }
 
+/* Think mode */
+.think-mode-selector {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.85);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    border: 1px solid #f0f0f0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    position: relative;
+}
+
+.mode-label {
+    color: var(--text-color);
+    font-weight: 700;
+}
+
+.mode-radio {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-color);
+}
+
+.think-mode-help {
+    position: relative;
+    color: var(--text-light);
+    cursor: help;
+    margin-left: 2px;
+}
+
+.think-mode-hover-card {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    width: 280px;
+    background: var(--white);
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    z-index: 30;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--text-color);
+}
+
+.think-mode-help:hover .think-mode-hover-card {
+    display: block;
+}
+
+.think-mode-hover-line + .think-mode-hover-line {
+    margin-top: 8px;
+}
+
+/* References */
+.references-section {
+    margin-top: 10px;
+    padding: 12px 16px;
+    background-color: rgba(255, 255, 255, 0.9);
+    border-radius: 12px;
+    border-left: 4px solid var(--primary-color);
+    font-size: 0.85rem;
+}
+
+.references-title {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--primary-color);
+    cursor: pointer;
+}
+
+.references-list {
+    margin-top: 10px;
+}
+
+sup.cite-ref,
+span.cite-ref {
+    color: var(--primary-color);
+    font-weight: 700;
+    margin: 0 2px;
+    cursor: pointer;
+}
+
+sup.cite-ref:hover,
+span.cite-ref:hover {
+    color: #ff6b6b;
+    text-decoration: underline;
+}
+
+@keyframes highlightFade {
+    0% { background-color: rgba(255, 158, 153, 0.4); border-color: var(--primary-color); }
+    100% { background-color: rgba(255, 255, 255, 0.6); border-color: rgba(0, 0, 0, 0.03); }
+}
+
+.highlight-chunk {
+    animation: highlightFade 2s ease-out forwards !important;
+}
+
 .session-meta {
     display: flex;
     justify-content: space-between;

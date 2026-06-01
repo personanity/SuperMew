@@ -55,8 +55,9 @@ class ConversationStorage:
                 session = ChatSession(user_id=user.id, session_id=session_id, metadata_json=metadata or {})
                 db.add(session)
                 db.flush()
-            else:
-                session.metadata_json = metadata or {}
+            elif metadata is not None:
+                existing_meta = session.metadata_json or {}
+                session.metadata_json = {**existing_meta, **metadata}
 
             db.query(ChatMessage).filter(ChatMessage.session_ref_id == session.id).delete(synchronize_session=False)
 
@@ -103,6 +104,25 @@ class ConversationStorage:
         cache.set_json(self._messages_cache_key(user_id, session_id), records)
         return self._to_langchain_messages(records)
 
+    def load_with_meta(self, user_id: str, session_id: str) -> tuple[list, dict]:
+        """加载对话消息及会话元数据（标题、持久化笔记等）。"""
+        messages = self.load(user_id, session_id)
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.username == user_id).first()
+            if not user:
+                return messages, {}
+            session = (
+                db.query(ChatSession)
+                .filter(ChatSession.user_id == user.id, ChatSession.session_id == session_id)
+                .first()
+            )
+            if not session:
+                return messages, {}
+            return messages, dict(session.metadata_json or {})
+        finally:
+            db.close()
+
     def list_sessions(self, user_id: str) -> list:
         return [item["session_id"] for item in self.list_session_infos(user_id)]
 
@@ -126,9 +146,11 @@ class ConversationStorage:
             result = []
             for s in sessions:
                 count = db.query(ChatMessage).filter(ChatMessage.session_ref_id == s.id).count()
+                meta = s.metadata_json or {}
                 result.append(
                     {
                         "session_id": s.session_id,
+                        "title": meta.get("title") or s.session_id,
                         "updated_at": s.updated_at.isoformat(),
                         "message_count": count,
                     }

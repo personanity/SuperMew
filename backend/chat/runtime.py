@@ -10,6 +10,7 @@ load_dotenv()
 
 API_KEY = os.getenv("ARK_API_KEY")
 MODEL = os.getenv("MODEL")
+FAST_MODEL = os.getenv("FAST_MODEL") or MODEL
 BASE_URL = os.getenv("BASE_URL")
 
 SYSTEM_PROMPT = (
@@ -20,6 +21,7 @@ SYSTEM_PROMPT = (
     "Once you call search_knowledge_base and receive its result, you MUST immediately produce the Final Answer based on that result. "
     "After receiving search_knowledge_base result, you MUST NOT call any tool again (including get_current_weather or search_knowledge_base). "
     "If the retrieved context is insufficient, answer honestly that you don't know instead of making up facts. "
+    "When answering based on retrieved chunks, you MUST cite the source chunks using their index numbers inline, for example [1] or [2][3]. "
     "If tool results include a Step-back Question/Answer, use that general principle to reason and answer, "
     "but do not reveal chain-of-thought. "
     "If you don't know the answer, admit it honestly."
@@ -36,12 +38,21 @@ def create_agent_instance():
         stream_usage=True,
     )
 
+    fast_model = init_chat_model(
+        model=FAST_MODEL,
+        model_provider="openai",
+        api_key=API_KEY,
+        base_url=BASE_URL,
+        temperature=0.2,
+        stream_usage=True,
+    )
+
     agent = create_agent(
         model=model,
         tools=[get_current_weather, search_knowledge_base],
         system_prompt=SYSTEM_PROMPT,
     )
-    return agent, model
+    return agent, model, fast_model
 
 
-agent, model = create_agent_instance()
+agent, model, fast_model = create_agent_instance()

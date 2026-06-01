@@ -33,7 +33,8 @@ createApp({
                 role: 'user',
                 admin_code: ''
             },
-            authLoading: false
+            authLoading: false,
+            thinkMode: 'normal'
         };
     },
     computed: {
@@ -42,6 +43,13 @@ createApp({
         },
         isAdmin() {
             return this.currentUser?.role === 'admin';
+        },
+        thinkModeHints() {
+            return {
+                fast: '快速：Milvus 召回约 10 块，跳过 Rerank',
+                normal: '正常：召回约 15 块，启用 Rerank，最终约 10 块',
+                deep: '深度：召回约 30 块，启用 Rerank，最终约 15 块'
+            };
         }
     },
     async mounted() {
@@ -53,6 +61,19 @@ createApp({
                 this.handleLogout();
             }
         }
+        this.$nextTick(() => {
+            if (this.$refs.chatContainer) {
+                this.$refs.chatContainer.addEventListener('click', (e) => {
+                    const citeRef = e.target.closest('.cite-ref');
+                    if (!citeRef) return;
+                    const msgIndex = citeRef.getAttribute('data-msg-index');
+                    const chunkIndex = citeRef.getAttribute('data-chunk-index');
+                    if (msgIndex != null && chunkIndex != null) {
+                        this.scrollToChunk(Number(msgIndex), Number(chunkIndex));
+                    }
+                });
+            }
+        });
     },
     beforeUnmount() {
         this.stopUploadJobPolling();
@@ -72,8 +93,39 @@ createApp({
             });
         },
 
-        parseMarkdown(text) {
-            return marked.parse(text);
+        parseMarkdown(text, msgIndex) {
+            let html = marked.parse(text || '');
+            let inCode = false;
+            return html.split(/(<[^>]*>)/).map(part => {
+                if (part.startsWith('<')) {
+                    if (part.startsWith('<code') || part.startsWith('<pre')) inCode = true;
+                    if (part.startsWith('</code') || part.startsWith('</pre')) inCode = false;
+                    return part;
+                }
+                if (!inCode && msgIndex != null) {
+                    return part.replace(/\[([\d\s,]+)\]/g, (match, p1) => {
+                        const numbers = p1.split(',').map(n => n.trim()).filter(n => /^\d+$/.test(n));
+                        if (numbers.length === 0) return match;
+                        return numbers.map(
+                            n => `<sup class="cite-ref" data-msg-index="${msgIndex}" data-chunk-index="${n}">[${n}]</sup>`
+                        ).join('');
+                    });
+                }
+                return part;
+            }).join('');
+        },
+
+        scrollToChunk(msgIndex, chunkIndex) {
+            const msgEl = document.querySelectorAll('.message')[msgIndex];
+            if (!msgEl) return;
+            const details = msgEl.querySelector('details.references-details');
+            if (details) details.open = true;
+            const chunkEl = document.getElementById(`chunk-${msgIndex}-${chunkIndex}`);
+            if (chunkEl) {
+                chunkEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                chunkEl.classList.add('highlight-chunk');
+                setTimeout(() => chunkEl.classList.remove('highlight-chunk'), 2000);
+            }
         },
 
         escapeHtml(text) {
@@ -89,6 +141,10 @@ createApp({
             const k = trace.candidate_k;
             if (trace.candidate_k_config_error) {
                 return `Milvus 候选池：${k}（${trace.candidate_k_config_error}，已回退倍数计算）`;
+            }
+            if (trace.candidate_k_source === 'think_mode') {
+                const mode = trace.think_mode || '';
+                return `Milvus 候选池：${k}（思考模式：${mode}）`;
             }
             if (trace.candidate_k_source === 'env') {
                 return `Milvus 候选池：${k}（环境变量 RETRIEVAL_CANDIDATE_K）`;
@@ -229,6 +285,19 @@ createApp({
                 isUser: true
             });
 
+            if (this.messages.length === 1) {
+                const tempTitle = text.length > 10 ? text.substring(0, 10) + '...' : text;
+                const existingSession = this.sessions.find(s => s.session_id === this.sessionId);
+                if (!existingSession) {
+                    this.sessions.unshift({
+                        session_id: this.sessionId,
+                        title: tempTitle,
+                        message_count: 1,
+                        updated_at: new Date().toISOString()
+                    });
+                }
+            }
+
             this.userInput = '';
             this.$nextTick(() => {
                 this.resetTextareaHeight();
@@ -253,7 +322,8 @@ createApp({
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: text,
-                        session_id: this.sessionId
+                        session_id: this.sessionId,
+                        think_mode: this.thinkMode
                     }),
                     signal: this.abortController.signal,
                 });
@@ -292,6 +362,22 @@ createApp({
                                         this.messages[botMsgIdx].ragSteps = [];
                                     }
                                     this.messages[botMsgIdx].ragSteps.push(data.step);
+                                } else if (data.type === 'session_title') {
+                                    const s = this.sessions.find(
+                                        item => item.session_id === data.session_id
+                                    );
+                                    if (s) {
+                                        s.title = data.title;
+                                        s.updated_at = new Date().toISOString();
+                                        s.message_count = this.messages.length;
+                                    } else {
+                                        this.sessions.unshift({
+                                            session_id: data.session_id,
+                                            title: data.title,
+                                            message_count: this.messages.length,
+                                            updated_at: new Date().toISOString()
+                                        });
+                                    }
                                 } else if (data.type === 'error') {
                                     this.messages[botMsgIdx].isThinking = false;
                                     this.messages[botMsgIdx].text += `\n[Error: ${data.content}]`;
@@ -398,7 +484,8 @@ createApp({
         },
 
         async deleteSession(sessionId) {
-            if (!confirm(`确定要删除会话 "${sessionId}" 吗？`)) {
+            const sessionLabel = this.sessions.find(s => s.session_id === sessionId)?.title || sessionId;
+            if (!confirm(`确定要删除会话 "${sessionLabel}" 吗？`)) {
                 return;
             }
 
