@@ -382,6 +382,138 @@ body {
     font-size: 0.92em;
 }
 
+/* 复杂度路由样式 */
+.trace-complexity {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.tag-simple,
+.tag-complex {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.tag-simple {
+    background-color: #d3f9d8;
+    color: #2b8a3e;
+}
+
+.tag-complex {
+    background-color: #ffe3e3;
+    color: #c92a2a;
+}
+
+.trace-detail {
+    color: var(--text-light);
+    font-size: 0.85rem;
+}
+
+.trace-sub-questions {
+    margin-top: 4px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 8px;
+    border-left: 3px solid var(--primary-color);
+}
+
+.trace-sub-qs-header {
+    font-weight: 600;
+    font-size: 0.88rem;
+    margin-bottom: 6px;
+    color: var(--text-color);
+}
+
+.trace-sub-qs-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.trace-sub-q-item {
+    font-size: 0.85rem;
+    color: var(--text-color);
+    line-height: 1.5;
+}
+
+.trace-sub-q-index {
+    font-weight: 700;
+    color: var(--primary-color);
+    margin-right: 4px;
+}
+
+/* 子 Agent 检索详情 */
+.trace-sub-traces {
+    margin-top: 8px;
+}
+
+.sub-traces-details {
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.sub-traces-title {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--primary-color);
+    padding: 6px 10px;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.sub-traces-title::-webkit-details-marker {
+    display: none;
+}
+
+.sub-traces-title::before {
+    content: '▶';
+    display: inline-block;
+    margin-right: 4px;
+    transition: transform 0.2s ease;
+    font-size: 0.7rem;
+}
+
+.sub-traces-details[open] .sub-traces-title::before {
+    transform: rotate(90deg);
+}
+
+.sub-trace-block {
+    padding: 8px 10px;
+    border-top: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.sub-trace-block:last-child {
+    border-bottom: none;
+}
+
+.sub-trace-header {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-color);
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+}
+
+.sub-trace-chunks {
+    font-size: 0.82rem;
+    color: var(--text-light);
+    margin-top: 2px;
+}
+
 .sources {
     margin-top: 10px;
 }

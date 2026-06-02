@@ -56,6 +56,13 @@ class RagTrace(BaseModel):
     retrieved_chunks: Optional[List[RetrievedChunk]] = None
     initial_retrieved_chunks: Optional[List[RetrievedChunk]] = None
     expanded_retrieved_chunks: Optional[List[RetrievedChunk]] = None
+    # 复杂度路由新增字段
+    complexity: Optional[str] = None
+    complexity_reason: Optional[str] = None
+    sub_questions: Optional[List[str]] = None
+    sub_agent_count: Optional[int] = None
+    synthesis_merged_count: Optional[int] = None
+    sub_traces: Optional[List[dict]] = None
 
 
 class ChatResponse(BaseModel):
