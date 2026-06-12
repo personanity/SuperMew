@@ -70,16 +70,48 @@ docker compose logs -f standalone
 - MinIO Console：`9001`
 - Attu：`8080`
 
-### 5) 启动应用并访问
-在 Milvus 启动后，运行后端应用：
+### 5) 编译前端代码（首次运行及修改后必做）
+首次运行或前端代码修改后，需要进行前端依赖安装和构建编译，以生成供后端托管的 `frontend/dist` 目录：
 
 ```bash
+cd frontend
+
+# 安装前端依赖
+npm install
+
+# 编译构建静态包
+npm run build
+```
+
+编译完成后，构建产物会自动保存在 `frontend/dist/` 中，后端启动时会自动挂载此目录。
+
+### 6) 启动应用并访问
+在 Milvus 启动且前端编译完成后，返回项目根目录并运行后端应用：
+
+```bash
+# 若当前处于 frontend 目录下，先返回项目根目录
+cd ..
+
+# 运行后端应用
 uv run uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 浏览器访问：
-- 前端页面：`http://127.0.0.1:8000/`
+- 前端页面：`http://127.0.0.1:8000/` （后端静态托管编译后的 `frontend/dist` 资源）
 - API 文档：`http://127.0.0.1:8000/docs`
+
+### 7) 前端开发与调试（可选）
+前端基于 Vite + Vue 3 开发。若需要进行前端代码开发与调试：
+
+```bash
+cd frontend
+
+# 1. 启动本地开发服务（运行于 http://localhost:3000，内置反向代理至 FastAPI 后端 8000 端口）
+npm run dev
+
+# 2. 编译生产包（构建结果将输出至 frontend/dist/ 目录中，供后端静态托管）
+npm run build
+```
 
 ## 项目概览
 - **核心能力**：
@@ -200,7 +232,9 @@ uv run uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
   - `schemas/`：Pydantic 请求/响应（auth / chat / documents）。
   - `jobs/`：[upload_jobs.py](backend/jobs/upload_jobs.py)：异步上传/删除任务进度。
 - 前端：`frontend/`
-  - [index.html](frontend/index.html) + [script.js](frontend/script.js) + [style.css](frontend/style.css)：Vue 3 + marked + highlight.js，提供聊天、历史会话、文档上传/删除界面。
+  - 采用现代工程化设计（Vite + Vue 3 + TypeScript + Pinia + Axios + Sass）。
+  - 在 `frontend/` 目录下运行 `npm run dev` 即可开始开发联调（运行于 http://localhost:3000）。
+  - 在 `frontend/` 目录下运行 `npm run build` 会生成生产环境编译产物输出至 `frontend/dist/`，供 FastAPI 后端无缝进行静态托管。
 - 数据：`data/`
   - `bm25_state.json`：BM25 词表与 `doc_freq` / `total_docs` 等统计（稀疏检索 IDF 与入库、删除同步）。
   - `documents/`：上传文档原文件。
@@ -265,7 +299,7 @@ uv run uvicorn backend.app:app --host 0.0.0.0 --port 8000 --reload
 - 后端：FastAPI、LangChain Agents、Pydantic、Uvicorn、SQLAlchemy、PostgreSQL、Redis。
 - 向量与检索：Milvus（HNSW 稠密索引 + SPARSE_INVERTED_INDEX 稀疏索引）、RRF 融合、Jina Rerank 精排。
 - 嵌入与稀疏：`langchain_huggingface` 本地稠密向量（默认 `BAAI/bge-m3`）；中英混合规则分词 + BM25 手写稀疏向量，统计持久化至 `bm25_state.json`。
-- 前端：Vue 3 (CDN)、marked、highlight.js、纯静态部署。
+- 前端：Vite + Vue 3 (SFC) + TypeScript + Pinia + Axios + Marked + Highlight.js + FontAwesome，工程化编译与静态文件托管。
 - 工具链：dotenv 配置、requests、langchain_text_splitters、langchain_community.loaders。
 
 ## 环境变量

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.api import router
 from backend.infra.database import init_db
 
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
+FRONTEND_DIR = PROJECT_ROOT / "frontend" / "dist"
 
 
 def create_app() -> FastAPI:
